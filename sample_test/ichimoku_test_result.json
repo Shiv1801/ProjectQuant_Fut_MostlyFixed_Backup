@@ -1,0 +1,15 @@
+{
+  "WITH Tenkan/Kijun cross signal": {
+    "trades": 247,
+    "win_rate": 47.0,
+    "total_pnl": -7198.75,
+    "avg_pnl": -29.14
+  },
+  "AGAINST Tenkan/Kijun cross signal": {
+    "trades": 2004,
+    "win_rate": 39.8,
+    "total_pnl": 317201.0,
+    "avg_pnl": 158.28
+  },
+  "verdict": "No clear difference"
+}

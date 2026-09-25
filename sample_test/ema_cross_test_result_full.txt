@@ -1,0 +1,22 @@
+======================================================================
+EMA 10/20 CROSSOVER ALIGNMENT TEST
+(NO EXCLUSIONS -- full trade set including low-premium outliers)
+======================================================================
+
+WITH EMA cross signal:
+  Trades: 58
+  Win rate: 46.6%
+  Total P&L: 184,575.00
+  Avg P&L per trade: 3,182.33
+
+AGAINST EMA cross signal:
+  Trades: 2346
+  Win rate: 40.0%
+  Total P&L: 536,227.75
+  Avg P&L per trade: 228.57
+
+----------------------------------------------------------------------
+VERDICT:
+  WITH-signal trades meaningfully outperform (win rate +6.5pp, avg P&L 3182 vs 229).
+
+  SUPPORTS adding an EMA cross filter

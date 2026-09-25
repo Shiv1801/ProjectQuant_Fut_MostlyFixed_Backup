@@ -1,0 +1,242 @@
+<!--
+  Frontend additions for this session's work. Designed to be inserted
+  into the existing Trade Log and Positions & Risk sections of
+  frontend/index.html. Shown here as a standalone reference file since
+  the full index.html is large; integrate the pieces below into the
+  corresponding existing sections.
+-->
+
+<!-- ============ 1. Expandable trade rows in Trade Log ============ -->
+<!-- Add a small expand affordance to each trade row, and a details
+     panel that loads /trade-log/{position_id}/actions on click. -->
+
+<style>
+  .trade-row { cursor: pointer; }
+  .trade-row:hover { background: var(--card-inset); }
+  .trade-action-panel {
+    display: none;
+    background: var(--card-inset);
+    padding: 10px 16px;
+    font-size: 12px;
+    border-left: 2px solid var(--accent);
+  }
+  .trade-action-panel.expanded { display: block; }
+  .trade-action-row {
+    display: flex;
+    gap: 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .trade-action-timestamp { color: var(--text-muted); min-width: 190px; font-family: monospace; }
+  .trade-action-name { min-width: 140px; font-weight: 600; }
+  .trade-action-detail { color: var(--text-default); flex: 1; }
+</style>
+
+<script>
+  // Call this when a trade row is clicked. rowEl is the <tr>, panelEl
+  // is the details <tr>/<td> pair immediately below it (created once,
+  // toggled thereafter -- avoids re-fetching on every click).
+  async function toggleTradeActionPanel(positionId, panelEl) {
+    const isExpanded = panelEl.classList.contains("expanded");
+    if (isExpanded) {
+      panelEl.classList.remove("expanded");
+      return;
+    }
+
+    panelEl.classList.add("expanded");
+    panelEl.innerHTML = `<div style="padding:8px; color:var(--text-muted);">Loading action history...</div>`;
+
+    try {
+      const res = await fetch(`${BASE}/trade-log/${positionId}/actions`);
+      const payload = await res.json();
+      if (payload.status !== "ok" || !payload.actions.length) {
+        panelEl.innerHTML = `<div style="padding:8px; color:var(--text-muted);">No detailed action history recorded for this trade.</div>`;
+        return;
+      }
+
+      const rows = payload.actions.map(a => `
+        <div class="trade-action-row">
+          <span class="trade-action-timestamp">${a.timestamp}</span>
+          <span class="trade-action-name">${a.action}</span>
+          <span class="trade-action-detail">${a.detail || ""}</span>
+        </div>
+      `).join("");
+
+      panelEl.innerHTML = `
+        <div style="font-weight:600; margin-bottom:6px; font-size:11px; color:var(--text-muted);">
+          FULL ACTION HISTORY (${payload.actions.length} events)
+        </div>
+        ${rows}
+      `;
+    } catch (err) {
+      panelEl.innerHTML = `<div style="padding:8px; color:#f87171;">Failed to load action history.</div>`;
+    }
+  }
+
+  // Example integration into an existing trade-log render function:
+  // for each trade row, render an extra hidden row right after it:
+  //
+  //   <tr class="trade-row" onclick="toggleTradeActionPanel(${trade.id}, document.getElementById('panel-${trade.id}'))">
+  //     ...existing trade cells (entry, exit, P&L, etc.)...
+  //   </tr>
+  //   <tr><td colspan="8"><div class="trade-action-panel" id="panel-${trade.id}"></div></td></tr>
+  //
+  // This works identically for OPEN and CLOSED trades -- an open
+  // trade's panel will simply show entry_submitted/entry_filled (and
+  // any TSL updates so far) with no exit_filled yet; a closed trade's
+  // panel additionally shows exit_triggered/exit_filled as its last
+  // entries, per explicit request ("since the trade is closed the
+  // exited status is the last status on that trade").
+</script>
+
+
+<!-- ============ 2. Rejection Log tab ============ -->
+<!-- A new tab, only meaningful once live trading has actually been
+     used -- shows empty state clearly for pure paper-trading accounts,
+     rather than looking broken. -->
+
+<section id="tab-rejections" style="display:none;">
+  <div class="card">
+    <div style="font-size:12px; margin-bottom:10px;">Order Rejection Log</div>
+    <div class="footer-note" style="margin-bottom:10px;">
+      Real order attempts that failed or were rejected by Fyers. Empty if you have never
+      placed a real (live-mode) order, or if all real orders so far have succeeded.
+    </div>
+    <table>
+      <thead>
+        <tr><th>Timestamp</th><th>Index</th><th>Attempted Action</th><th>Reason</th></tr>
+      </thead>
+      <tbody id="rejectionLogBody">
+        <tr><td colspan="4" style="text-align:center; color:var(--text-muted);">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  async function refreshRejectionLog() {
+    const tbody = document.getElementById("rejectionLogBody");
+    try {
+      const res = await fetch(`${BASE}/rejection-log`);
+      const payload = await res.json();
+      if (payload.count === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">
+          No rejections recorded. This is expected if you're paper trading, or if all real orders so far have succeeded.
+        </td></tr>`;
+        return;
+      }
+      tbody.innerHTML = payload.rejections.map(r => `
+        <tr>
+          <td style="font-family:monospace; font-size:11px;">${r.timestamp}</td>
+          <td>${r.index_id}</td>
+          <td>${r.attempted_action}</td>
+          <td style="color:#f87171;">${r.reason}</td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:#f87171;">Failed to load rejection log.</td></tr>`;
+    }
+  }
+  // Call refreshRejectionLog() when the Rejections tab is shown, same
+  // pattern as this app's other tabs.
+</script>
+
+
+<!-- ============ 3. Live Trading controls (Positions & Risk) ============ -->
+<!-- Two independent switches, deliberately kept visually distinct and
+     separately confirmed -- per the two-gate safety design in
+     engine/execution/trade_dispatcher.py. Neither switch alone
+     enables real trading. -->
+
+<div class="card" style="border: 1px solid #f87171; margin-bottom: 16px;">
+  <div style="font-size:12px; margin-bottom:10px; color:#f87171; font-weight:600;">
+    ⚠ REAL MONEY TRADING CONTROLS
+  </div>
+  <div class="footer-note" style="margin-bottom:12px;">
+    BOTH switches below must be ON for any real order to be placed. Either one alone keeps
+    all trading in safe, simulated paper mode. Turning either off mid-trade does not cancel
+    already-open real positions -- those still close via a real order when their exit fires.
+  </div>
+
+  <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px;">
+    <input type="checkbox" id="liveMasterToggle" />
+    <strong>Master switch:</strong> Enable real order placement account-wide
+  </label>
+
+  <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+    <span>NIFTY50 mode:</span>
+    <select id="niftyModeSelect" style="background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 4px 8px; border-radius: 3px;">
+      <option value="off">Off (no trading)</option>
+      <option value="paper">Paper (simulated)</option>
+      <option value="live">Live (real orders)</option>
+      <option value="both">Both (real + shadow paper)</option>
+    </select>
+  </label>
+
+  <div id="liveTradingStatusNote" style="margin-top:10px; font-size:12px; font-weight:600;"></div>
+</div>
+
+<script>
+  function updateLiveTradingStatusNote() {
+    const master = document.getElementById("liveMasterToggle").checked;
+    const mode = document.getElementById("niftyModeSelect").value;
+    const noteEl = document.getElementById("liveTradingStatusNote");
+    const isLive = master && (mode === "live" || mode === "both");
+    if (isLive) {
+      noteEl.innerText = "⚠ REAL MONEY TRADING IS ACTIVE for NIFTY50.";
+      noteEl.style.color = "#f87171";
+    } else {
+      noteEl.innerText = "✓ Safe: all trading is simulated (paper) — no real orders will be placed.";
+      noteEl.style.color = "#4ade80";
+    }
+  }
+
+  async function loadLiveTradingControls() {
+    const res = await fetch(`${BASE}/config/account`);
+    const payload = await res.json();
+    document.getElementById("liveMasterToggle").checked = payload.config.live_trading_master_enabled;
+
+    const idxRes = await fetch(`${BASE}/config/indices/NIFTY50`);
+    const idxPayload = await idxRes.json();
+    document.getElementById("niftyModeSelect").value = idxPayload.config.mode;
+
+    updateLiveTradingStatusNote();
+  }
+
+  document.getElementById("liveMasterToggle").addEventListener("change", async (e) => {
+    await fetch(`${BASE}/config/account`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({live_trading_master_enabled: e.target.checked}),
+    });
+    updateLiveTradingStatusNote();
+  });
+
+  document.getElementById("niftyModeSelect").addEventListener("change", async (e) => {
+    await fetch(`${BASE}/config/indices/NIFTY50/mode`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mode: e.target.value}),
+    });
+    updateLiveTradingStatusNote();
+  });
+
+  // Call loadLiveTradingControls() on page load / when Positions & Risk tab is shown.
+</script>
+
+
+<!-- ============ 4. Real account balance display ============ -->
+<div class="footer-note" id="realBalanceDisplay" style="margin-bottom:10px;"></div>
+<script>
+  async function refreshRealBalance() {
+    const res = await fetch(`${BASE}/config/account`);
+    const payload = await res.json();
+    const el = document.getElementById("realBalanceDisplay");
+    const bal = payload.config.real_available_balance;
+    const updated = payload.config.real_balance_last_updated;
+    if (bal !== null && bal !== undefined) {
+      el.innerText = `Real Fyers available balance: ₹${bal.toLocaleString()} (as of ${updated})`;
+    } else {
+      el.innerText = `Real balance not yet available — using configured capital (₹${payload.config.total_available_capital.toLocaleString()}) for sizing.`;
+    }
+  }
+  // Call refreshRealBalance() alongside the other periodic dashboard refreshes.
+</script>

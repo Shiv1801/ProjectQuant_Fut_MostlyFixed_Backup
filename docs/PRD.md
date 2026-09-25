@@ -1,0 +1,1 @@
+See the original uploaded PRD (PRDv1.0.pdf) — copy or export it here for version-controlled reference alongside this codebase.

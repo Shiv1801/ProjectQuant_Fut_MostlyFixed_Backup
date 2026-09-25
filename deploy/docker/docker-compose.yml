@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: trade_user
+      POSTGRES_PASSWORD: trade_pass
+      POSTGRES_DB: project_trade
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  engine:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.engine
+    env_file: ../../.env
+    depends_on: [timescaledb, redis]
+    volumes:
+      - ../../logs:/app/logs
+      - ../../data:/app/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.api
+    env_file: ../../.env
+    depends_on: [timescaledb, redis]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  timescale_data:

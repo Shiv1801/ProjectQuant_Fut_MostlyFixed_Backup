@@ -1,0 +1,14 @@
+[Unit]
+Description=Project Trade — FastAPI backend
+After=network.target project-trade-engine.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/project-trade
+EnvironmentFile=/opt/project-trade/.env
+ExecStart=/opt/project-trade/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

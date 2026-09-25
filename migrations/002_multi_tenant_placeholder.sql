@@ -1,0 +1,9 @@
+-- Placeholder for future SaaS multi-tenancy (PRD §11.2) — NOT applied by
+-- default. Threading a user_id dimension through every table above is a
+-- real architecture change, deferred per §11.3 sequencing recommendation
+-- (prove the system on your own capital first).
+--
+-- Sketch only:
+-- ALTER TABLE positions ADD COLUMN user_id UUID;
+-- ALTER TABLE trade_log ADD COLUMN user_id UUID;
+-- CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), fyers_client_id TEXT, ...);

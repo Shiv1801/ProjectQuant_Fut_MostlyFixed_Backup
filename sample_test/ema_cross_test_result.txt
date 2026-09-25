@@ -1,0 +1,22 @@
+======================================================================
+EMA 10/20 CROSSOVER ALIGNMENT TEST
+(low-premium trades under Rs10.0 excluded upfront: 153 trades removed)
+======================================================================
+
+WITH EMA cross signal:
+  Trades: 56
+  Win rate: 44.6%
+  Total P&L: 92,826.25
+  Avg P&L per trade: 1,657.61
+
+AGAINST EMA cross signal:
+  Trades: 2195
+  Win rate: 40.5%
+  Total P&L: 217,176.00
+  Avg P&L per trade: 98.94
+
+----------------------------------------------------------------------
+VERDICT:
+  No large, clear difference between the two groups in this (cleaned) data.
+
+  No clear difference

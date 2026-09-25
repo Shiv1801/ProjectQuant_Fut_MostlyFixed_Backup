@@ -1,0 +1,2137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Project Trade</title>
+  <style>
+    .exit-trade-btn {
+      background: #f87171; color: #0a0e14; border: none; border-radius: 3px;
+      padding: 4px 12px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+    }
+    .exit-trade-btn:hover { background: #ef4444; }
+    .exit-trade-btn:disabled { background: var(--card-inset); color: var(--text-muted); cursor: not-allowed; }
+    :root {
+      --bg: #0a0e14; --card: #131820; --card-inset: #0e1218; --group-header: #161c26;
+      --border-default: #232b38; --border-subtle: #1a202b;
+      --text-primary: #d4d9e0; --text-muted: #6b7688; --text-secondary: #9ca8b8;
+      --positive: #4ade80; --negative: #f87171; --warning: #fbbf24;
+      --accent: #4fd1c5; --info-paper: #60a5fa; --strike-highlight: #e2c96a;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text-primary); font-family: Consolas, Menlo, monospace; margin: 0; font-size: 13px; }
+    header { border-bottom: 1px solid var(--border-default); background: var(--card); }
+    .regime-strip { height: 3px; width: 100%; background: var(--text-muted); }
+    nav { display: flex; gap: 20px; padding: 10px 16px; font-size: 12px; }
+    nav button { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 6px 4px; font-family: inherit; font-size: 12px; border-bottom: 2px solid transparent; }
+    nav button.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+    main { padding: 16px; max-width: 100%; overflow-x: hidden; box-sizing: border-box; }
+    .badge { font-size: 9px; padding: 2px 6px; border-radius: 3px; font-family: inherit; }
+    .badge-paper { background: #60a5fa22; color: var(--info-paper); }
+    .badge-conn-ok { background: #4ade8022; color: var(--positive); }
+    .badge-conn-fail { background: #f8717122; color: var(--negative); }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .card { background: var(--card); border: 1px solid var(--border-default); border-radius: 4px; padding: 14px 18px; }
+    .stat-label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .stat-value { font-size: 22px; margin-top: 4px; }
+    .change-pos { color: var(--positive); }
+    .change-neg { color: var(--negative); }
+    .row { display: flex; justify-content: space-between; font-size: 11px; margin-top: 3px; }
+    .row-label { color: var(--text-muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { color: var(--text-muted); text-align: right; padding: 6px 8px; font-weight: normal; border-bottom: 1px solid var(--border-default); }
+    th:first-child, th:nth-child(2) { text-align: left; }
+    td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--border-subtle); }
+    td:first-child, td:nth-child(2) { text-align: left; }
+    tr.atm-row td { background: #e2c96a11; color: var(--strike-highlight); }
+    .placeholder { color: var(--text-muted); font-size: 12px; padding: 40px; text-align: center; }
+    .footer-note { color: var(--text-muted); font-size: 10px; margin-top: 10px; }
+    .chain-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .index-tabs { display: flex; gap: 6px; }
+    .index-tabs button { background: var(--card-inset); border: 1px solid var(--border-default); color: var(--text-muted); font-family: inherit; font-size: 11px; padding: 5px 12px; border-radius: 3px; cursor: pointer; }
+    .index-tabs button.active { color: var(--accent); border-color: var(--accent); }
+    .oi-summary { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+
+    .login-panel {
+      background: var(--card); border: 1px solid var(--warning); border-radius: 4px;
+      padding: 14px 18px; margin-bottom: 14px; display: none;
+    }
+    .login-panel.show { display: block; }
+    .login-panel .title { color: var(--warning); font-size: 12px; margin-bottom: 8px; }
+    .login-panel a.login-link {
+      color: var(--info-paper); text-decoration: none; font-size: 12px; word-break: break-all;
+    }
+    .login-panel input {
+      background: var(--card-inset); border: 1px solid var(--border-default); color: var(--text-primary);
+      font-family: inherit; font-size: 11px; padding: 6px 10px; border-radius: 3px; width: 380px; margin-top: 8px;
+    }
+    .login-panel button {
+      background: var(--accent); color: #06231f; border: none; font-family: inherit; font-size: 11px;
+      padding: 6px 14px; border-radius: 3px; cursor: pointer; margin-left: 6px; margin-top: 8px;
+    }
+    .login-panel .status-line { font-size: 11px; margin-top: 8px; }
+    .token-badge-ok { background: #4ade8022; color: var(--positive); }
+    .token-badge-stale { background: #fbbf2422; color: var(--warning); }
+
+    .charts-layout { display: flex; flex-direction: column; gap: 12px; }
+    .chart-panel { width: 100%; }
+    .signal-panel { width: 100%; }
+    #candleCanvas { background: var(--card-inset); border-radius: 4px; width: 100%; display: block; }
+    .model-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }
+    .model-name { color: var(--text-secondary); }
+    .model-group { color: var(--text-muted); font-size: 9px; }
+    .model-value { font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="regime-strip" id="regimeStrip"></div>
+    <nav id="tabNav">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="charts">Charts &amp; Signals</button>
+      <button data-tab="chain">Option Chain</button>
+      <button data-tab="positions">Positions &amp; Risk</button>
+      <button data-tab="tradelog">Trade Log</button>
+      <button data-tab="rejections">Rejections</button>
+      <button data-tab="backtest">Backtest &amp; Models</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="connLine" style="font-size:11px; margin-bottom:12px;">
+      <span class="badge badge-conn-fail" id="connBadge">CHECKING</span>
+      <span class="badge badge-paper" style="margin-left:6px;">PAPER MODE</span>
+      <span class="badge" id="tokenBadge" style="margin-left:6px;"></span>
+      <span class="badge" id="pollerBadge" style="margin-left:6px;"></span>
+    </div>
+
+    <div id="holidayBanner" style="display:none; font-size:12px; margin-bottom:12px; padding:8px 12px; border-radius:4px;"></div>
+
+    <div class="login-panel" id="loginPanel">
+      <div class="title" id="loginPanelTitle">Fyers token needs refresh</div>
+      <div>
+        <a href="#" class="login-link" id="loginUrlLink" target="_blank">Click to log in with Fyers</a>
+      </div>
+      <div>
+        <input type="text" id="authCodeInput" placeholder="Paste auth_code (or full redirect URL) here" />
+        <button id="submitAuthCodeBtn">Save Token</button>
+      </div>
+      <div class="status-line" id="loginStatusLine"></div>
+    </div>
+
+    <section id="tab-dashboard">
+      <div class="grid-4" id="dashboardGrid"></div>
+      <div class="footer-note" id="dashboardUpdated"></div>
+    </section>
+
+    <section id="tab-charts" style="display:none;">
+      <div class="chain-header">
+        <span class="footer-note" id="chartUpdated"></span>
+      </div>
+      <div class="footer-note" id="allCandleCounts" style="margin-bottom:8px;"></div>
+      <button id="restoreDataBtn" style="background: var(--card-inset); border: 1px solid var(--border-default); color: var(--accent); font-family: inherit; font-size: 10px; padding: 4px 10px; border-radius: 3px; cursor: pointer; margin-bottom: 10px;">Restore historical data (30 days)</button>
+      <button id="restoreDataExtendedBtn" title="Fetches ~6 months of real candle + volume history. May take several minutes." style="background: var(--card-inset); border: 1px solid var(--border-default); color: var(--accent); font-family: inherit; font-size: 10px; padding: 4px 10px; border-radius: 3px; cursor: pointer; margin-bottom: 10px; margin-left: 6px;">Backfill 6 months (incl. volume, for VWAP)</button>
+      <div class="footer-note" id="restoreStatus" style="margin-bottom:8px;"></div>
+      <div class="charts-layout">
+        <div class="chart-panel card">
+          <canvas id="candleCanvas" height="380"></canvas>
+          <div class="footer-note" id="candleInfo"></div>
+        </div>
+        <div class="signal-panel card">
+          <div id="confluenceBox" style="border: 1px solid var(--border-default); border-radius: 4px; padding: 12px; margin-bottom: 14px; background: var(--card-inset);">
+            <div style="font-size:11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Confluence Gate</div>
+            <div id="confluenceStatus" style="font-size: 18px; font-weight: bold;">—</div>
+            <div class="footer-note" id="confluenceDetail" style="margin-top: 6px;"></div>
+          </div>
+          <div id="strikeSelectorBox" style="border: 1px solid var(--border-default); border-radius: 4px; padding: 12px; margin-bottom: 14px; background: var(--card-inset); display: none;">
+            <div style="font-size:11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Selected Strike</div>
+            <div id="strikeSelectorStatus" style="font-size: 18px; font-weight: bold; color: var(--strike-highlight);">—</div>
+            <div class="footer-note" id="strikeSelectorDetail" style="margin-top: 6px;"></div>
+            <div class="footer-note" id="positionSizeDetail" style="margin-top: 6px; color: var(--accent);"></div>
+          </div>
+          <div style="font-size:12px; margin-bottom:6px;">Quant Models</div>
+          <div class="model-row">
+            <div>
+              <div class="model-name">Realized Volatility</div>
+              <div class="model-group">Group A</div>
+            </div>
+            <div class="model-value" id="rvValue">—</div>
+          </div>
+          <div class="model-row">
+            <div>
+              <div class="model-name">GARCH(1,1) Forecast</div>
+              <div class="model-group">Group A</div>
+            </div>
+            <div class="model-value" id="garchValue">—</div>
+          </div>
+          <div class="footer-note" id="garchNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Variance Risk Premium</div>
+              <div class="model-group">Group B</div>
+            </div>
+            <div class="model-value" id="vrpValue">—</div>
+          </div>
+          <div class="footer-note" id="vrpNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">IV Rank / Percentile</div>
+              <div class="model-group">Group B</div>
+            </div>
+            <div class="model-value" id="ivRankValue">—</div>
+          </div>
+          <div class="footer-note" id="ivRankNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Hurst Exponent</div>
+              <div class="model-group">Group C</div>
+            </div>
+            <div class="model-value" id="hurstValue">—</div>
+          </div>
+          <div class="footer-note" id="hurstNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Z-Score Deviation</div>
+              <div class="model-group">Group C</div>
+            </div>
+            <div class="model-value" id="zscoreValue">—</div>
+          </div>
+          <div class="footer-note" id="zscoreNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Variance Ratio Test</div>
+              <div class="model-group">Group C</div>
+            </div>
+            <div class="model-value" id="vrTestValue">—</div>
+          </div>
+          <div class="footer-note" id="vrTestNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Order Flow Imbalance</div>
+              <div class="model-group">Group C</div>
+            </div>
+            <div class="model-value" id="ofiValue">—</div>
+          </div>
+          <div class="footer-note" id="ofiNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Gamma Exposure</div>
+              <div class="model-group">Group D</div>
+            </div>
+            <div class="model-value" id="gexValue">—</div>
+          </div>
+          <div class="footer-note" id="gexNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Put-Call Ratio</div>
+              <div class="model-group">Group D</div>
+            </div>
+            <div class="model-value" id="pcrValue">—</div>
+          </div>
+          <div class="footer-note" id="pcrNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Max Pain</div>
+              <div class="model-group">Group D</div>
+            </div>
+            <div class="model-value" id="maxPainValue">—</div>
+          </div>
+          <div class="footer-note" id="maxPainNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">OI Change (Top Build)</div>
+              <div class="model-group">Group D</div>
+            </div>
+            <div class="model-value" id="oiChangeValue">—</div>
+          </div>
+          <div class="footer-note" id="oiChangeNote" style="margin-top:6px;"></div>
+          <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-default);">
+            <div class="footer-note" style="margin-bottom: 6px;">System-wide (Group E) — not per-index</div>
+          </div>
+          <div class="model-row">
+            <div>
+              <div class="model-name">VIX Regime</div>
+              <div class="model-group">Group E</div>
+            </div>
+            <div class="model-value" id="vixRegimeValue">—</div>
+          </div>
+          <div class="footer-note" id="vixRegimeNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">RV/IV Ratio</div>
+              <div class="model-group">Group E</div>
+            </div>
+            <div class="model-value" id="rvIvRatioValue">—</div>
+          </div>
+          <div class="footer-note" id="rvIvRatioNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Correlation Breakdown</div>
+              <div class="model-group">Group E</div>
+            </div>
+            <div class="model-value" id="corrBreakdownValue">—</div>
+          </div>
+          <div class="footer-note" id="corrBreakdownNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Fractional Kelly</div>
+              <div class="model-group">Group F</div>
+            </div>
+            <div class="model-value" id="kellyValue">—</div>
+          </div>
+          <div class="footer-note" id="kellyNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">Vol-Scaled Sizing</div>
+              <div class="model-group">Group F</div>
+            </div>
+            <div class="model-value" id="volScaledValue">—</div>
+          </div>
+          <div class="footer-note" id="volScaledNote" style="margin-top:6px;"></div>
+          <div class="footer-note" style="margin-top:10px;">More models (Group G) added in upcoming steps.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-chain" style="display:none;">
+      <div class="card">
+        <div class="chain-header">
+          <span class="footer-note" id="chainUpdated"></span>
+        </div>
+        <div class="oi-summary" id="chainOiSummary"></div>
+        <table>
+          <thead><tr><th>CE IV</th><th>CE OI</th><th>CE LTP</th><th>Strike</th><th>PE LTP</th><th>PE OI</th><th>PE IV</th></tr></thead>
+          <tbody id="chainBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-positions" style="display:none;">
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px;">Account Controls</div>
+        <div style="display:flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input type="checkbox" id="autoEntryToggle" />
+            Auto-Entry Enabled
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            Total Capital: ₹<input type="number" id="totalCapitalInput" style="width: 110px; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 4px 8px; border-radius: 3px;" />
+          </label>
+          <button id="saveAccountConfigBtn" style="padding: 6px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Save</button>
+          <span class="footer-note" id="accountConfigStatus"></span>
+        </div>
+        <div class="footer-note" style="margin-top: 8px;">Auto-entry is OFF by default for safety. Each index below trades independently — only when ITS OWN settings' conditions are met. Paper tracking always happens for any index not set to Off.</div>
+      </div>
+
+      <div class="card" style="border: 1px solid #f87171; margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px; color:#f87171; font-weight:600;">
+          ⚠ REAL MONEY TRADING — MASTER SWITCH
+        </div>
+        <div class="footer-note" style="margin-bottom:12px;">
+          This switch AND an index's own Mode (set to Live or Both, below) must BOTH be on before any
+          real order is ever placed. Either one alone keeps everything in safe, simulated paper mode.
+          Turning this off does not cancel an already-open real position — it still exits via a real
+          order when its exit condition fires.
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom: 10px;">
+          <input type="checkbox" id="liveMasterToggle" />
+          <strong>Enable real order placement account-wide</strong>
+        </label>
+        <div id="liveTradingStatusNote" style="font-size:12px; font-weight:600;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom: 14px; max-width: 100%; overflow-x: hidden; box-sizing: border-box;">
+        <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>Per-Index Settings</span>
+          <button id="resetAllIndicesBtn" style="padding: 4px 10px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 12px;">Reset All to Default</button>
+        </div>
+        <div id="perIndexSettingsContainer" style="max-width: 100%;"></div>
+      </div>
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px;">Last Auto-Entry Cycle (per index)</div>
+        <div id="autoEntryCycleStatus" class="footer-note">No cycle data yet — enable auto-entry to see live status here.</div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>Open Positions (Paper)</span>
+          <span class="footer-note" id="positionsUpdated"></span>
+        </div>
+        <table class="chain-table">
+          <thead>
+            <tr>
+              <th>Index</th><th>Strike</th><th>Type</th><th>Direction</th><th>Lots</th>
+              <th>Entry</th><th>Current</th><th>Peak %</th><th>P&L</th><th>Opened</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="positionsBody">
+            <tr><td colspan="11" class="placeholder">No open positions</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-tradelog" style="display:none;">
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px;">Filters</div>
+        <div style="display:flex; gap: 14px; align-items: center; flex-wrap: wrap;">
+          <label style="font-size:12px;">From:
+            <input type="date" id="statsFilterStart" style="background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 4px 8px; border-radius: 3px; margin-left:4px;" />
+          </label>
+          <label style="font-size:12px;">To:
+            <input type="date" id="statsFilterEnd" style="background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 4px 8px; border-radius: 3px; margin-left:4px;" />
+          </label>
+          <label style="font-size:12px;">Outcome:
+            <select id="statsFilterOutcome" style="background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 4px 8px; border-radius: 3px; margin-left:4px;">
+              <option value="">All</option>
+              <option value="win">Wins only</option>
+              <option value="loss">Losses only</option>
+            </select>
+          </label>
+          <button id="applyStatsFilterBtn" style="padding: 6px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Apply</button>
+          <button id="resetStatsFilterBtn" style="padding: 6px 14px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Reset</button>
+          <button id="downloadCsvBtn" style="padding: 6px 14px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px; margin-left: auto;">⬇ Download CSV</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:12px;">Trade Statistics</div>
+        <div id="statsCardsGrid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;">
+          <div class="placeholder" style="grid-column: 1 / -1;">Loading...</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px;">Equity Curve</div>
+        <canvas id="equityCurveCanvas" height="260"></canvas>
+        <div class="footer-note" id="equityCurveInfo"></div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>Closed Trades</span>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="footer-note" id="tradeLogUpdated"></span>
+            <button id="clearTradeHistoryBtn" style="padding: 3px 10px; background: transparent; color: #f87171; border: 1px solid #f87171; border-radius: 3px; cursor: pointer; font-size: 11px;">Clear History</button>
+          </div>
+        </div>
+        <table class="chain-table">
+          <thead>
+            <tr>
+              <th>Index</th><th>Strike</th><th>Direction</th><th>Lots</th>
+              <th>Entry Date</th><th>Entry Time</th><th>Entry ₹</th>
+              <th>Exit Date</th><th>Exit Time</th><th>Exit ₹</th>
+              <th>Reason</th><th>P&L</th><th>P&L %</th><th>Hold (min)</th>
+            </tr>
+          </thead>
+          <tbody id="tradeLogBody">
+            <tr><td colspan="14" class="placeholder">No closed trades yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-rejections" style="display:none;">
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:10px;">Order Rejection Log</div>
+        <div class="footer-note" style="margin-bottom:10px;">
+          Real order attempts that failed or were rejected by Fyers. Empty if you have never
+          placed a real (live-mode) order, or if all real orders so far have succeeded.
+        </div>
+        <table>
+          <thead>
+            <tr><th>Timestamp</th><th>Index</th><th>Attempted Action</th><th>Reason</th></tr>
+          </thead>
+          <tbody id="rejectionLogBody">
+            <tr><td colspan="4" class="placeholder">No rejections recorded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-backtest" style="display:none;">
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>Risk Settings (Live)</span>
+          <button id="resetSettingsBtn" style="padding: 4px 10px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 12px;">Reset to Default</button>
+        </div>
+        <div id="riskSettingsTable" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 13px;"></div>
+        <div class="footer-note" id="resetStatus" style="margin-top: 8px;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px;">Run Backtest — test overrides here before applying to live</div>
+        <div style="display:flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 10px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input type="checkbox" id="btWalkForward" /> Walk-forward (70/30 split)
+          </label>
+          <button id="runBacktestBtn" style="padding: 6px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Run Backtest</button>
+          <span class="footer-note" id="backtestStatus"></span>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 12px;">
+          <label>Hard SL %: <input type="number" id="ovHardSl" step="0.5" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+          <label>Time Stop (min): <input type="number" id="ovTimeStop" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+          <label>TSL Activation %: <input type="number" id="ovTslActivation" step="0.5" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+          <label>TSL Base Trail %: <input type="number" id="ovTslBase" step="0.5" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+          <label>Risk/Trade %: <input type="number" id="ovRiskPerTrade" step="0.5" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+          <label>Min Confidence: <input type="number" id="ovMinConfidence" step="0.05" min="0" max="1" style="width:100%; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" placeholder="live value" /></label>
+        </div>
+        <div class="footer-note" style="margin-top: 6px;">Leave any field blank to use the current live value. Fill in to test an override.</div>
+        <div class="footer-note" style="margin-top: 4px;" id="backtestNote"></div>
+      </div>
+      <div class="card" id="backtestResultsBox" style="display:none; margin-bottom: 14px;">
+        <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>Results</span>
+          <button id="applyBacktestBtn" style="display:none; padding: 5px 12px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 12px;">Apply These Settings to Live</button>
+        </div>
+        <div id="applyConfirmBox" style="display:none; margin-bottom: 10px; padding: 10px; border: 1px solid #fbbf24; border-radius: 4px; background: rgba(251,191,36,0.1);"></div>
+        <div id="backtestResultsContent"></div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:10px;">Backtest History</div>
+        <table class="chain-table">
+          <thead><tr><th>Index</th><th>Mode</th><th>Trades</th><th>Win Rate</th><th>Return %</th><th>Max DD %</th><th>Applied?</th><th>When</th></tr></thead>
+          <tbody id="backtestHistoryBody"><tr><td colspan="8" class="placeholder">No backtest runs yet</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const BASE = "http://127.0.0.1:8001";
+    const LABELS = { NIFTY50: "NIFTY 50", INDIAVIX: "INDIA VIX" };
+    let currentChainIndex = "NIFTY50";
+    let currentChartIndex = "NIFTY50";
+
+    document.querySelectorAll("#tabNav button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#tabNav button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        document.querySelectorAll("main > section").forEach((s) => (s.style.display = "none"));
+        document.getElementById(`tab-${btn.dataset.tab}`).style.display = "block";
+        if (btn.dataset.tab === "rejections") refreshRejectionLog();
+      });
+    });
+
+    document.querySelectorAll("#chainIndexTabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#chainIndexTabs button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentChainIndex = btn.dataset.index;
+        refreshOptionChain();
+      });
+    });
+
+    document.querySelectorAll("#chartIndexTabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#chartIndexTabs button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentChartIndex = btn.dataset.index;
+        refreshChart();
+      });
+    });
+
+    function toIST(isoString) {
+      if (!isoString) return "—";
+      try {
+        const date = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+        if (isNaN(date.getTime())) return "—";
+        return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true });
+      } catch { return "—"; }
+    }
+
+    function renderCard(key, d) {
+      if (!d || d.error) {
+        return `<div class="card"><div class="stat-label">${LABELS[key]}</div><div class="stat-value">—</div></div>`;
+      }
+      const cls = d.change >= 0 ? "change-pos" : "change-neg";
+      const sign = d.change >= 0 ? "+" : "";
+      return `
+        <div class="card">
+          <div class="stat-label">${LABELS[key]}</div>
+          <div class="stat-value">${d.ltp}</div>
+          <div class="${cls}" style="font-size:11px;">${sign}${d.change} (${sign}${d.change_pct}%)</div>
+          <div class="row"><span class="row-label">Open</span><span>${d.open}</span></div>
+          <div class="row"><span class="row-label">High</span><span>${d.high}</span></div>
+          <div class="row"><span class="row-label">Low</span><span>${d.low}</span></div>
+          <div class="row"><span class="row-label">Prev Close</span><span>${d.prev_close}</span></div>
+        </div>`;
+    }
+
+    async function refreshDashboard() {
+      try {
+        const res = await fetch(`${BASE}/market/all`);
+        const payload = await res.json();
+        if (payload.status !== "ok") {
+          // Check if this is specifically the known quotes-endpoint issue
+          // (other pollers healthy) vs a genuine broader outage, so the
+          // message doesn't cause false alarm when everything else works.
+          let extraContext = "";
+          try {
+            const pollersRes = await fetch(`${BASE}/pollers/status`);
+            const pollersPayload = await pollersRes.json();
+            const chainHealthy = pollersPayload.pollers?.option_chain?.consecutive_errors === 0;
+            const depthHealthy = pollersPayload.pollers?.depth?.consecutive_errors === 0;
+            if (chainHealthy && depthHealthy) {
+              extraContext = "<div class=\"footer-note\" style=\"margin-top:8px; color: var(--text-muted);\">Note: this only affects the Dashboard price cards. Option Chain, Charts & Signals, the Confluence Gate, and auto-trading are all reading from a healthy data feed and unaffected.</div>";
+            }
+          } catch {}
+          document.getElementById("dashboardGrid").innerHTML =
+            `<div class="card" style="grid-column: 1 / -1;"><div class="footer-note" style="color:#f87171;">${payload.message || 'Waiting for live price data...'}</div>${extraContext}</div>`;
+          return;
+        }
+        document.getElementById("dashboardGrid").innerHTML =
+          Object.keys(LABELS).map((k) => renderCard(k, payload.data[k])).join("");
+        document.getElementById("dashboardUpdated").innerText = payload.fetched_at ? `updated ${toIST(payload.fetched_at)} IST` : "";
+      } catch {
+        document.getElementById("dashboardGrid").innerHTML =
+          `<div class="card" style="grid-column: 1 / -1;"><div class="footer-note" style="color:#f87171;">Failed to reach backend.</div></div>`;
+      }
+    }
+
+    function renderChainRow(row, atmStrike) {
+      const isAtm = Math.abs(row.strike - atmStrike) < 25;
+      const ce = row.CE || {}; const pe = row.PE || {};
+      const ceIv = ce.iv !== undefined && ce.iv !== null ? `${ce.iv}%` : '—';
+      const peIv = pe.iv !== undefined && pe.iv !== null ? `${pe.iv}%` : '—';
+      return `<tr class="${isAtm ? 'atm-row' : ''}">
+        <td>${ceIv}</td><td>${ce.oi ?? '—'}</td><td>${ce.ltp ?? '—'}</td>
+        <td style="text-align:center;">${row.strike}</td>
+        <td>${pe.ltp ?? '—'}</td><td>${pe.oi ?? '—'}</td><td>${peIv}</td></tr>`;
+    }
+
+    async function refreshOptionChain() {
+      try {
+        const res = await fetch(`${BASE}/market/option-chain?index=${currentChainIndex}`);
+        const payload = await res.json();
+        if (payload.status !== "ok") {
+          document.getElementById("chainBody").innerHTML = `<tr><td colspan="7" class="placeholder">${payload.message || 'Error'}</td></tr>`;
+          return;
+        }
+        const strikes = payload.strikes;
+        const mid = strikes[Math.floor(strikes.length / 2)];
+        const atmStrike = mid ? mid.strike : 0;
+        document.getElementById("chainBody").innerHTML = strikes.map((r) => renderChainRow(r, atmStrike)).join("");
+        document.getElementById("chainUpdated").innerText = `updated ${toIST(payload.fetched_at)} IST`;
+        document.getElementById("chainOiSummary").innerText =
+          `Total Call OI: ${payload.call_oi_total?.toLocaleString() ?? '—'}   |   Total Put OI: ${payload.put_oi_total?.toLocaleString() ?? '—'}`;
+      } catch {
+        document.getElementById("chainBody").innerHTML = `<tr><td colspan="7" class="placeholder">Failed to reach /market/option-chain</td></tr>`;
+      }
+    }
+
+    // ---- Candlestick chart: crisp rendering + TradingView-style date/time X-axis ----
+    function formatBucketLabel(bucketStr) {
+      // bucketStr looks like "2026-09-02 20:12:00" (already IST, stored as local string)
+      const [datePart, timePart] = bucketStr.split(" ");
+      const [, month, day] = datePart.split("-");
+      const [hh, mm] = timePart.split(":");
+      let h = parseInt(hh, 10);
+      const ampm = h >= 12 ? "PM" : "AM";
+      h = h % 12 || 12;
+      return { dateLabel: `${day}/${month}`, timeLabel: `${h}:${mm} ${ampm}` };
+    }
+
+    function drawCandles(candles) {
+      const canvas = document.getElementById("candleCanvas");
+      const ctx = canvas.getContext("2d");
+
+      // Fix blur: match canvas internal resolution to devicePixelRatio
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = canvas.parentElement.clientWidth - 36; // account for card padding
+      const cssHeight = 380;
+      canvas.style.width = cssWidth + "px";
+      canvas.style.height = cssHeight + "px";
+      canvas.width = cssWidth * dpr;
+      canvas.height = cssHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const W = cssWidth, H = cssHeight;
+      ctx.clearRect(0, 0, W, H);
+      ctx.textBaseline = "middle";
+      ctx.font = "11px Consolas, Menlo, monospace";
+
+      if (!candles || candles.length === 0) {
+        ctx.fillStyle = "#6b7688";
+        ctx.fillText("No candle data yet — wait for a few ticks to accumulate", 20, H / 2);
+        return;
+      }
+
+      const highs = candles.map((c) => c.high);
+      const lows = candles.map((c) => c.low);
+      const maxP = Math.max(...highs);
+      const minP = Math.min(...lows);
+      const pad = (maxP - minP) * 0.1 || 1;
+      const yMax = maxP + pad, yMin = minP - pad;
+
+      const marginLeft = 70, marginRight = 14, marginTop = 12, marginBottom = 40;
+      const plotW = W - marginLeft - marginRight;
+      const plotH = H - marginTop - marginBottom;
+      const candleW = Math.max(2, Math.min(14, plotW / candles.length * 0.6));
+      const step = plotW / candles.length;
+
+      function yToPixel(price) {
+        return marginTop + (1 - (price - yMin) / (yMax - yMin)) * plotH;
+      }
+
+      // Y-axis gridlines + price labels (crisp, left-aligned, more contrast)
+      ctx.strokeStyle = "#1a202b";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "#9ca8b8";
+      const yTicks = 5;
+      for (let i = 0; i <= yTicks; i++) {
+        const price = yMin + (yMax - yMin) * (i / yTicks);
+        const y = yToPixel(price);
+        ctx.beginPath();
+        ctx.moveTo(marginLeft, Math.round(y) + 0.5);
+        ctx.lineTo(W - marginRight, Math.round(y) + 0.5);
+        ctx.stroke();
+        ctx.textAlign = "right";
+        ctx.fillText(price.toFixed(2), marginLeft - 8, y);
+      }
+
+      // X-axis: date/time labels, spaced out to avoid overlap (TradingView-style)
+      const maxXLabels = Math.floor(plotW / 80); // ~80px per label minimum
+      const xLabelStride = Math.max(1, Math.ceil(candles.length / maxXLabels));
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#6b7688";
+      let lastDateLabel = null;
+      candles.forEach((c, i) => {
+        if (i % xLabelStride !== 0) return;
+        const x = marginLeft + i * step + step / 2;
+        const { dateLabel, timeLabel } = formatBucketLabel(c.minute_bucket);
+        ctx.fillText(timeLabel, x, H - marginBottom + 14);
+        if (dateLabel !== lastDateLabel) {
+          ctx.fillText(dateLabel, x, H - marginBottom + 28);
+          lastDateLabel = dateLabel;
+        }
+      });
+
+      // Vertical axis border
+      ctx.strokeStyle = "#232b38";
+      ctx.beginPath();
+      ctx.moveTo(marginLeft + 0.5, marginTop);
+      ctx.lineTo(marginLeft + 0.5, H - marginBottom);
+      ctx.lineTo(W - marginRight, H - marginBottom);
+      ctx.stroke();
+
+      // Candles
+      candles.forEach((c, i) => {
+        const x = marginLeft + i * step + step / 2;
+        const isUp = c.close >= c.open;
+        ctx.strokeStyle = isUp ? "#4ade80" : "#f87171";
+        ctx.fillStyle = isUp ? "#4ade80" : "#f87171";
+
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, yToPixel(c.high));
+        ctx.lineTo(Math.round(x) + 0.5, yToPixel(c.low));
+        ctx.stroke();
+
+        const bodyTop = yToPixel(Math.max(c.open, c.close));
+        const bodyBottom = yToPixel(Math.min(c.open, c.close));
+        ctx.fillRect(x - candleW / 2, bodyTop, candleW, Math.max(1, bodyBottom - bodyTop));
+      });
+    }
+
+    async function refreshChart() {
+      try {
+        const res = await fetch(`${BASE}/candles/${currentChartIndex}?limit=60`);
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          drawCandles(payload.candles);
+          document.getElementById("candleInfo").innerText = `${payload.count} candles loaded`;
+          document.getElementById("chartUpdated").innerText = `updated ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true })} IST`;
+        }
+      } catch {}
+
+      try {
+        const gateRes = await fetch(`${BASE}/signals/confluence/${currentChartIndex}`);
+        const gate = await gateRes.json();
+        const statusEl = document.getElementById("confluenceStatus");
+        const detailEl = document.getElementById("confluenceDetail");
+        const boxEl = document.getElementById("confluenceBox");
+        const strikeBox = document.getElementById("strikeSelectorBox");
+        if (gate.status === "ok") {
+          if (gate.fired) {
+            statusEl.innerText = `FIRED — ${gate.direction === "long_call" ? "BULLISH" : "BEARISH"}`;
+            statusEl.style.color = gate.direction === "long_call" ? "#4ade80" : "#f87171";
+            boxEl.style.borderColor = gate.direction === "long_call" ? "#4ade80" : "#f87171";
+
+            // Gate fired — fetch and show the selected strike
+            try {
+              const strikeRes = await fetch(`${BASE}/signals/strike-selector/${currentChartIndex}?direction=${gate.direction}`);
+              const strikeData = await strikeRes.json();
+              if (strikeData.status === "ok" && strikeData.selected) {
+                strikeBox.style.display = "block";
+                const sel = strikeData.selected;
+                document.getElementById("strikeSelectorStatus").innerText = `${sel.strike} ${sel.option_type} @ ${sel.ltp}`;
+                document.getElementById("strikeSelectorDetail").innerText =
+                  `delta ${sel.delta ?? '—'} · score ${(sel.composite_score * 100).toFixed(0)}% · ${strikeData.candidates_considered} candidates`;
+
+                // Fetch automatic position sizing for this fired signal
+                try {
+                  const sizeRes = await fetch(`${BASE}/signals/position-size/${currentChartIndex}`);
+                  const sizeData = await sizeRes.json();
+                  const sizeEl = document.getElementById("positionSizeDetail");
+                  if (sizeData.status === "ok" && sizeData.lots > 0) {
+                    sizeEl.innerText = `→ ${sizeData.lots} lots (${sizeData.total_quantity} qty) · capital ${sizeData.capital_required?.toLocaleString()} · risk ${sizeData.risk_if_stopped?.toLocaleString()} (${sizeData.risk_if_stopped_pct_of_available}%)`;
+                  } else {
+                    sizeEl.innerText = sizeData.note || "position sizing unavailable";
+                  }
+                } catch {}
+              } else {
+                strikeBox.style.display = "block";
+                document.getElementById("strikeSelectorStatus").innerText = "—";
+                document.getElementById("strikeSelectorDetail").innerText = strikeData.note || strikeData.message || "";
+              }
+            } catch {}
+          } else {
+            statusEl.innerText = "NOT FIRED";
+            statusEl.style.color = "#6b7688";
+            boxEl.style.borderColor = "var(--border-default)";
+            strikeBox.style.display = "none";
+          }
+          const confPct = gate.quant_confidence !== undefined ? (gate.quant_confidence * 100).toFixed(0) : "—";
+          detailEl.innerText = `quant confidence: ${confPct}% · ${gate.veto_reason || 'both legs agree'}`;
+        } else {
+          statusEl.innerText = "—";
+          detailEl.innerText = gate.message || "";
+          strikeBox.style.display = "none";
+        }
+      } catch {}
+
+      try {
+        const sigRes = await fetch(`${BASE}/signals/realized-vol/${currentChartIndex}?window=30`);
+        const sig = await sigRes.json();
+        document.getElementById("rvValue").innerText =
+          sig.realized_vol_pct !== null && sig.realized_vol_pct !== undefined ? `${sig.realized_vol_pct}%` : "—";
+      } catch {}
+
+      try {
+        const garchRes = await fetch(`${BASE}/signals/garch-vol/${currentChartIndex}?window=100`);
+        const garch = await garchRes.json();
+        document.getElementById("garchValue").innerText =
+          garch.garch_forecast_vol_pct !== null && garch.garch_forecast_vol_pct !== undefined ? `${garch.garch_forecast_vol_pct}%` : "—";
+        document.getElementById("garchNote").innerText = garch.note ? garch.note : "";
+      } catch {}
+
+      try {
+        const vrpRes = await fetch(`${BASE}/signals/vrp/${currentChartIndex}`);
+        const vrp = await vrpRes.json();
+        const vrpEl = document.getElementById("vrpValue");
+        if (vrp.status === "ok" && vrp.vrp_pct !== null && vrp.vrp_pct !== undefined) {
+          vrpEl.innerText = `${vrp.vrp_pct}%`;
+          vrpEl.style.color = vrp.favorable ? "#4ade80" : "#f87171";
+          document.getElementById("vrpNote").innerText =
+            `ATM ${vrp.atm_strike} · IV ${vrp.atm_iv_pct}% · ${vrp.note}`;
+        } else {
+          vrpEl.innerText = "—";
+          vrpEl.style.color = "";
+          document.getElementById("vrpNote").innerText = vrp.message || vrp.note || "";
+        }
+      } catch {}
+
+      try {
+        const ivRankRes = await fetch(`${BASE}/signals/iv-rank/${currentChartIndex}`);
+        const ivRank = await ivRankRes.json();
+        const ivRankEl = document.getElementById("ivRankValue");
+        if (ivRank.status === "ok" && ivRank.iv_rank !== null && ivRank.iv_rank !== undefined) {
+          ivRankEl.innerText = `${ivRank.iv_rank}`;
+          ivRankEl.style.color = ivRank.iv_rank > 70 ? "#f87171" : (ivRank.iv_rank < 30 ? "#4ade80" : "");
+          document.getElementById("ivRankNote").innerText =
+            `percentile ${ivRank.iv_percentile} · based on ${ivRank.sample_size} readings`;
+        } else {
+          ivRankEl.innerText = "—";
+          ivRankEl.style.color = "";
+          document.getElementById("ivRankNote").innerText = ivRank.note || "";
+        }
+      } catch {}
+
+      try {
+        const hurstRes = await fetch(`${BASE}/signals/hurst/${currentChartIndex}?window=100`);
+        const hurst = await hurstRes.json();
+        const hurstEl = document.getElementById("hurstValue");
+        const regimeColors = { trending: "#4ade80", mean_reverting: "#60a5fa", random_walk: "#6b7688" };
+        if (hurst.status === "ok" && hurst.hurst !== null && hurst.hurst !== undefined) {
+          hurstEl.innerText = `${hurst.hurst}`;
+          hurstEl.style.color = regimeColors[hurst.regime] || "";
+          document.getElementById("hurstNote").innerText = `regime: ${hurst.regime}`;
+          // Drive the top regime strip color from this — the one live regime signal so far
+          document.getElementById("regimeStrip").style.backgroundColor = regimeColors[hurst.regime] || "#6b7688";
+        } else {
+          hurstEl.innerText = "—";
+          hurstEl.style.color = "";
+          document.getElementById("hurstNote").innerText = hurst.note || "";
+        }
+      } catch {}
+
+      try {
+        const zscoreRes = await fetch(`${BASE}/signals/zscore/${currentChartIndex}?window=20`);
+        const zscore = await zscoreRes.json();
+        const zscoreEl = document.getElementById("zscoreValue");
+        if (zscore.status === "ok" && zscore.zscore !== null && zscore.zscore !== undefined) {
+          zscoreEl.innerText = `${zscore.zscore}`;
+          zscoreEl.style.color = Math.abs(zscore.zscore) > 2 ? "#fbbf24" : "";
+          document.getElementById("zscoreNote").innerText = zscore.interpretation || "";
+        } else {
+          zscoreEl.innerText = "—";
+          zscoreEl.style.color = "";
+          document.getElementById("zscoreNote").innerText = zscore.note || "";
+        }
+      } catch {}
+
+      try {
+        const vrTestRes = await fetch(`${BASE}/signals/variance-ratio/${currentChartIndex}?window=150&q=5`);
+        const vrTest = await vrTestRes.json();
+        const vrTestEl = document.getElementById("vrTestValue");
+        if (vrTest.status === "ok" && vrTest.variance_ratio !== null && vrTest.variance_ratio !== undefined) {
+          vrTestEl.innerText = `${vrTest.variance_ratio}`;
+          vrTestEl.style.color = vrTest.persistent ? "#4ade80" : (vrTest.mean_reverting ? "#60a5fa" : "");
+          document.getElementById("vrTestNote").innerText = vrTest.interpretation || "";
+        } else {
+          vrTestEl.innerText = "—";
+          vrTestEl.style.color = "";
+          document.getElementById("vrTestNote").innerText = vrTest.note || "";
+        }
+      } catch {}
+
+      try {
+        const ofiRes = await fetch(`${BASE}/signals/ofi/${currentChartIndex}`);
+        const ofi = await ofiRes.json();
+        const ofiEl = document.getElementById("ofiValue");
+        if (ofi.status === "ok" && ofi.ofi !== null && ofi.ofi !== undefined) {
+          ofiEl.innerText = `${ofi.ofi}`;
+          ofiEl.style.color = ofi.ofi > 0.2 ? "#4ade80" : (ofi.ofi < -0.2 ? "#f87171" : "");
+          document.getElementById("ofiNote").innerText = ofi.interpretation || "";
+        } else {
+          ofiEl.innerText = "—";
+          ofiEl.style.color = "";
+          document.getElementById("ofiNote").innerText = ofi.message || ofi.note || "";
+        }
+      } catch {}
+
+      try {
+        const gexRes = await fetch(`${BASE}/signals/gex/${currentChartIndex}`);
+        const gex = await gexRes.json();
+        const gexEl = document.getElementById("gexValue");
+        if (gex.status === "ok" && gex.gex !== null && gex.gex !== undefined) {
+          gexEl.innerText = gex.gex.toExponential(2);
+          gexEl.style.color = gex.gex > 0 ? "#4ade80" : "#f87171";
+          document.getElementById("gexNote").innerText = gex.interpretation || "";
+        } else {
+          gexEl.innerText = "—";
+          gexEl.style.color = "";
+          document.getElementById("gexNote").innerText = gex.message || gex.note || "";
+        }
+      } catch {}
+
+      try {
+        const pcrRes = await fetch(`${BASE}/signals/pcr/${currentChartIndex}`);
+        const pcr = await pcrRes.json();
+        const pcrEl = document.getElementById("pcrValue");
+        if (pcr.status === "ok" && pcr.pcr !== null && pcr.pcr !== undefined) {
+          pcrEl.innerText = `${pcr.pcr}`;
+          pcrEl.style.color = pcr.pcr > 1.3 ? "#4ade80" : (pcr.pcr < 0.7 ? "#f87171" : "");
+          document.getElementById("pcrNote").innerText = pcr.interpretation || "";
+        } else {
+          pcrEl.innerText = "—";
+          pcrEl.style.color = "";
+          document.getElementById("pcrNote").innerText = pcr.message || pcr.note || "";
+        }
+      } catch {}
+
+      try {
+        const maxPainRes = await fetch(`${BASE}/signals/max-pain/${currentChartIndex}`);
+        const maxPain = await maxPainRes.json();
+        const maxPainEl = document.getElementById("maxPainValue");
+        if (maxPain.status === "ok" && maxPain.max_pain_strike !== null && maxPain.max_pain_strike !== undefined) {
+          maxPainEl.innerText = `${maxPain.max_pain_strike}`;
+          document.getElementById("maxPainNote").innerText = maxPain.spot ? `spot: ${maxPain.spot}` : "";
+        } else {
+          maxPainEl.innerText = "—";
+          document.getElementById("maxPainNote").innerText = maxPain.message || maxPain.note || "";
+        }
+      } catch {}
+
+      try {
+        const oiChangeRes = await fetch(`${BASE}/signals/oi-change/${currentChartIndex}`);
+        const oiChange = await oiChangeRes.json();
+        const oiChangeEl = document.getElementById("oiChangeValue");
+        if (oiChange.status === "ok" && oiChange.top_oi_builds && oiChange.top_oi_builds.length > 0) {
+          const top = oiChange.top_oi_builds[0];
+          oiChangeEl.innerText = `${top.strike} ${top.side}`;
+          document.getElementById("oiChangeNote").innerText = `OI change: +${top.oi_change.toLocaleString()}`;
+        } else {
+          oiChangeEl.innerText = "—";
+          document.getElementById("oiChangeNote").innerText = oiChange.message || oiChange.note || "";
+        }
+      } catch {}
+
+      try {
+        const vixRes = await fetch(`${BASE}/signals/vix-regime`);
+        const vix = await vixRes.json();
+        const vixEl = document.getElementById("vixRegimeValue");
+        const regimeColorsE = { panic_regime: "#f87171", elevated_vol: "#fbbf24", vol_expansion_starting: "#fbbf24", calm: "#4ade80" };
+        if (vix.status === "ok" && vix.vix !== null && vix.vix !== undefined) {
+          vixEl.innerText = `${vix.vix}`;
+          vixEl.style.color = regimeColorsE[vix.regime] || "";
+          document.getElementById("vixRegimeNote").innerText = vix.interpretation || "";
+        } else {
+          vixEl.innerText = "—";
+          vixEl.style.color = "";
+          document.getElementById("vixRegimeNote").innerText = vix.note || "";
+        }
+      } catch {}
+
+      try {
+        const rvIvRes = await fetch(`${BASE}/signals/rv-iv-ratio/${currentChartIndex}`);
+        const rvIv = await rvIvRes.json();
+        const rvIvEl = document.getElementById("rvIvRatioValue");
+        if (rvIv.status === "ok" && rvIv.rv_iv_ratio !== null && rvIv.rv_iv_ratio !== undefined) {
+          rvIvEl.innerText = `${rvIv.rv_iv_ratio}`;
+          rvIvEl.style.color = rvIv.rv_iv_ratio >= 1.2 ? "#4ade80" : (rvIv.rv_iv_ratio < 0.8 ? "#f87171" : "");
+          document.getElementById("rvIvRatioNote").innerText = rvIv.interpretation || "";
+        } else {
+          rvIvEl.innerText = "—";
+          rvIvEl.style.color = "";
+          document.getElementById("rvIvRatioNote").innerText = rvIv.note || "";
+        }
+      } catch {}
+
+      try {
+        const corrRes = await fetch(`${BASE}/signals/correlation-breakdown`);
+        const corr = await corrRes.json();
+        const corrEl = document.getElementById("corrBreakdownValue");
+        if (corr.status === "ok" && corr.min_correlation !== null && corr.min_correlation !== undefined) {
+          corrEl.innerText = `${corr.min_correlation}`;
+          corrEl.style.color = corr.breakdown ? "#f87171" : "#4ade80";
+          document.getElementById("corrBreakdownNote").innerText = corr.interpretation || "";
+        } else {
+          corrEl.innerText = "—";
+          corrEl.style.color = "";
+          document.getElementById("corrBreakdownNote").innerText = corr.note || "";
+        }
+      } catch {}
+
+      try {
+        const kellyRes = await fetch(`${BASE}/signals/kelly-sizing`);
+        const kelly = await kellyRes.json();
+        const kellyEl = document.getElementById("kellyValue");
+        if (kelly.status === "ok" && kelly.sized_fraction !== null && kelly.sized_fraction !== undefined) {
+          kellyEl.innerText = `${(kelly.sized_fraction * 100).toFixed(1)}%`;
+          document.getElementById("kellyNote").innerText = kelly.note || `payoff ratio ${kelly.payoff_ratio}`;
+        } else {
+          kellyEl.innerText = "—";
+          document.getElementById("kellyNote").innerText = kelly.note || "";
+        }
+      } catch {}
+
+      try {
+        const volScaledRes = await fetch(`${BASE}/signals/vol-scaled-sizing/${currentChartIndex}`);
+        const volScaled = await volScaledRes.json();
+        const volScaledEl = document.getElementById("volScaledValue");
+        if (volScaled.status === "ok" && volScaled.scale !== null && volScaled.scale !== undefined) {
+          volScaledEl.innerText = `${volScaled.scale}x`;
+          volScaledEl.style.color = volScaled.scale > 1 ? "#4ade80" : (volScaled.scale < 1 ? "#fbbf24" : "");
+          document.getElementById("volScaledNote").innerText = volScaled.note || `size: ${volScaled.adjusted_size?.toLocaleString()}`;
+        } else {
+          volScaledEl.innerText = "—";
+          volScaledEl.style.color = "";
+          document.getElementById("volScaledNote").innerText = volScaled.note || "";
+        }
+      } catch {}
+    }
+
+    async function refreshConn() {
+      try {
+        await (await fetch(`${BASE}/health`)).json();
+        document.getElementById("connBadge").className = "badge badge-conn-ok";
+        document.getElementById("connBadge").innerText = "CONNECTED";
+      } catch {
+        document.getElementById("connBadge").className = "badge badge-conn-fail";
+        document.getElementById("connBadge").innerText = "DISCONNECTED";
+      }
+    }
+
+    // ---- Token status + in-app login flow ----
+    async function refreshTokenStatus() {
+      try {
+        const res = await fetch(`${BASE}/auth/status`);
+        const payload = await res.json();
+        const badge = document.getElementById("tokenBadge");
+        const panel = document.getElementById("loginPanel");
+        const title = document.getElementById("loginPanelTitle");
+
+        // Also check whether Fyers has explicitly rejected the token
+        // (distinct from our own age-based staleness guess) — this
+        // catches cases where the token LOOKS fresh by our clock but
+        // Fyers itself is rejecting it (e.g. revoked, wrong app, etc.)
+        let authErrorDetected = false;
+        try {
+          const pollersRes = await fetch(`${BASE}/pollers/status`);
+          const pollersPayload = await pollersRes.json();
+          authErrorDetected = pollersPayload.auth_error_detected === true;
+        } catch {}
+
+        if (!payload.has_token) {
+          badge.className = "badge token-badge-stale";
+          badge.innerText = "NOT LOGGED IN";
+          title.innerText = "No Fyers token found — log in to fetch live data";
+          panel.classList.add("show");
+          await loadLoginUrl();
+        } else if (payload.is_stale) {
+          badge.className = "badge token-badge-stale";
+          badge.innerText = `TOKEN STALE (${payload.token_age_hours}h old)`;
+          title.innerText = "Fyers token is over 20h old — please refresh (tokens expire daily)";
+          panel.classList.add("show");
+          await loadLoginUrl();
+        } else if (authErrorDetected) {
+          badge.className = "badge token-badge-stale";
+          badge.innerText = `TOKEN REJECTED BY FYERS`;
+          title.innerText = "Fyers rejected this token (invalid/expired/revoked) — please log in again";
+          panel.classList.add("show");
+          await loadLoginUrl();
+        } else {
+          badge.className = "badge token-badge-ok";
+          badge.innerText = `TOKEN OK (${payload.token_age_hours}h old)`;
+          panel.classList.remove("show");
+        }
+      } catch {}
+    }
+
+    async function loadLoginUrl() {
+      try {
+        const res = await fetch(`${BASE}/auth/login-url`);
+        const payload = await res.json();
+        const link = document.getElementById("loginUrlLink");
+        if (payload.status === "ok") {
+          link.href = payload.login_url;
+          link.innerText = "Click here to log in with Fyers →";
+        } else {
+          link.innerText = `Error: ${payload.message}`;
+        }
+      } catch {}
+    }
+
+    document.getElementById("submitAuthCodeBtn").addEventListener("click", async () => {
+      const input = document.getElementById("authCodeInput");
+      const statusLine = document.getElementById("loginStatusLine");
+      if (!input.value.trim()) {
+        statusLine.innerText = "Please paste the auth_code first.";
+        return;
+      }
+      statusLine.innerText = "Exchanging code...";
+      try {
+        const res = await fetch(`${BASE}/auth/exchange`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auth_code: input.value.trim() }),
+        });
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          statusLine.innerText = "✓ Token saved successfully!";
+          statusLine.style.color = "#4ade80";
+          input.value = "";
+          setTimeout(refreshTokenStatus, 1000);
+        } else {
+          statusLine.innerText = `Error: ${payload.message}`;
+          statusLine.style.color = "#f87171";
+        }
+      } catch (err) {
+        statusLine.innerText = "Failed to reach backend.";
+        statusLine.style.color = "#f87171";
+      }
+    });
+
+    async function refreshCandleCounts() {
+      try {
+        const res = await fetch(`${BASE}/candles/count/all`);
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          document.getElementById("allCandleCounts").innerText =
+            "Candles stored — " + Object.entries(payload.counts).map(([k, v]) => `${LABELS[k] || k}: ${v}`).join("   |   ");
+        }
+      } catch {}
+    }
+
+    function toISTShort(isoStr) {
+      if (!isoStr) return "—";
+      try {
+        return new Date(isoStr).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      } catch { return isoStr; }
+    }
+
+    function toISTDateOnly(isoStr) {
+      if (!isoStr) return "—";
+      try {
+        return new Date(isoStr).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "2-digit" });
+      } catch { return "—"; }
+    }
+
+    function toISTTimeOnly(isoStr) {
+      if (!isoStr) return "—";
+      try {
+        return new Date(isoStr).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, hour: "2-digit", minute: "2-digit" });
+      } catch { return "—"; }
+    }
+
+    const INDEX_LIST = ["NIFTY50"];  // BankNifty and FinNifty removed — Nifty-only app
+    const RISK_PARAM_LABELS = {
+      hard_sl_pct: "Hard SL %", time_stop_minutes: "Time Stop (min)",
+      tsl_activation_pct: "TSL Activation %", tsl_base_trail_pct: "TSL Base Trail %",
+      risk_per_trade_pct: "Risk/Trade %", min_confluence_confidence: "Min Confidence",
+    };
+
+    function renderIndexCard(indexId, cfg) {
+      const risk = cfg.risk_params;
+      const modeWarning = (cfg.mode === "live" || cfg.mode === "both")
+        ? `<div style="margin-top:6px; padding: 6px; border: 1px solid #f87171; border-radius: 3px; background: rgba(248,113,113,0.1); font-size: 11px; color: #f87171;">⚠ REAL ORDERS: this index will place genuine Fyers orders when the master Live Trading switch (above) is also ON. Both must be on together for real money to move.</div>`
+        : "";
+      return `<div class="card" style="margin-bottom: 10px; background: var(--card-inset); max-width: 100%; box-sizing: border-box; overflow-x: hidden;" data-index="${indexId}">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 10px; max-width: 100%;">
+          <strong>${LABELS[indexId] || indexId}</strong>
+          <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; max-width: 100%;">
+            <label style="font-size:12px;">Mode:
+              <select class="idx-mode-select" style="background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px; margin-left:4px;">
+                <option value="off" ${cfg.mode === "off" ? "selected" : ""}>Off</option>
+                <option value="paper" ${cfg.mode === "paper" ? "selected" : ""}>Paper</option>
+                <option value="live" ${cfg.mode === "live" ? "selected" : ""}>Live</option>
+                <option value="both" ${cfg.mode === "both" ? "selected" : ""}>Both</option>
+              </select>
+            </label>
+            <label style="font-size:12px;">Capital %:
+              <input type="number" class="idx-capital-pct" value="${cfg.capital_allocation_pct}" step="1" min="0" max="100" style="width:60px; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px; margin-left:4px;" />
+            </label>
+            <span class="footer-note">(₹${cfg.capital_rupees?.toLocaleString() ?? "—"})</span>
+            <button class="idx-reset-btn" data-index="${indexId}" style="padding: 3px 8px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 3px; cursor: pointer; font-size: 11px;">Reset</button>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 12px;">
+          ${Object.entries(RISK_PARAM_LABELS).map(([key, label]) => `
+            <label>${label}: <input type="number" class="idx-risk-input" data-key="${key}" value="${risk[key]}" step="0.5" style="width:100%; box-sizing: border-box; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" /></label>
+          `).join("")}
+        </div>
+        ${modeWarning}
+        <button class="idx-save-btn" data-index="${indexId}" style="margin-top:8px; padding: 5px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">Save ${LABELS[indexId] || indexId}</button>
+        <span class="footer-note idx-save-status" style="margin-left:8px;"></span>
+      </div>`;
+    }
+
+    async function loadPerIndexSettings() {
+      const container = document.getElementById("perIndexSettingsContainer");
+      try {
+        const res = await fetch(`${BASE}/config/indices`);
+        const payload = await res.json();
+        if (payload.status !== "ok") {
+          container.innerHTML = `<div class="card" style="color:#f87171;">Backend returned an error loading settings: ${payload.message || "unknown error"}</div>`;
+          return;
+        }
+
+        document.getElementById("autoEntryToggle").checked = payload.account.auto_entry_enabled;
+        document.getElementById("totalCapitalInput").value = payload.account.total_available_capital;
+        document.getElementById("liveMasterToggle").checked = payload.account.live_trading_master_enabled;
+        updateLiveTradingStatusNote();
+
+        container.innerHTML = INDEX_LIST.map(idx => {
+          if (!payload.indices[idx]) {
+            console.error(`loadPerIndexSettings: backend returned NO config for ${idx}`, payload);
+            return `<div class="card" style="margin-bottom: 10px; color: #f87171;">No config data returned for ${idx} — try refreshing.</div>`;
+          }
+          return renderIndexCard(idx, payload.indices[idx]);
+        }).join("");
+
+        container.querySelectorAll(".idx-save-btn").forEach(btn => {
+          btn.addEventListener("click", () => saveIndexSettings(btn.dataset.index));
+        });
+        container.querySelectorAll(".idx-reset-btn").forEach(btn => {
+          btn.addEventListener("click", () => resetIndexSettings(btn.dataset.index));
+        });
+      } catch (err) {
+        console.error("loadPerIndexSettings failed:", err);
+        container.innerHTML = `<div class="card" style="color:#f87171;">Failed to load Per-Index Settings: ${err.message}. Check the browser console (F12) for full detail, and confirm the backend is reachable at ${BASE}.</div>`;
+      }
+    }
+
+    async function saveIndexSettings(indexId) {
+      const card = document.querySelector(`#perIndexSettingsContainer [data-index="${indexId}"]`);
+      if (!card) { alert(`Could not find the settings card for ${indexId}. Try refreshing the page.`); return; }
+      const statusEl = card.querySelector(".idx-save-status");
+
+      const modeEl = card.querySelector(".idx-mode-select");
+      const capitalEl = card.querySelector(".idx-capital-pct");
+      if (!modeEl || !capitalEl) {
+        const msg = "Page is missing expected fields — please hard-refresh (Ctrl+Shift+R) and try again.";
+        if (statusEl) { statusEl.innerText = msg; statusEl.style.color = "#f87171"; } else { alert(msg); }
+        return;
+      }
+      const mode = modeEl.value;
+      const capitalPct = parseFloat(capitalEl.value);
+
+      if (isNaN(capitalPct)) {
+        statusEl.innerText = "Capital % field is empty or invalid"; statusEl.style.color = "#f87171";
+        return;
+      }
+
+      const riskInputs = card.querySelectorAll(".idx-risk-input");
+      if (riskInputs.length === 0) {
+        const msg = "Page is missing risk parameter fields — please hard-refresh (Ctrl+Shift+R) and try again.";
+        statusEl.innerText = msg; statusEl.style.color = "#f87171";
+        return;
+      }
+      const riskUpdates = {};
+      let hasInvalidRisk = false;
+      riskInputs.forEach(input => {
+        const val = parseFloat(input.value);
+        if (isNaN(val)) hasInvalidRisk = true;
+        riskUpdates[input.dataset.key] = val;
+      });
+      if (hasInvalidRisk) {
+        statusEl.innerText = "One or more risk fields are empty or invalid"; statusEl.style.color = "#f87171";
+        return;
+      }
+
+      try {
+        const modeRes = await fetch(`${BASE}/config/indices/${indexId}/mode`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }),
+        });
+        const modePayload = await modeRes.json();
+        if (modePayload.status !== "ok") {
+          statusEl.innerText = modePayload.message; statusEl.style.color = "#f87171"; return;
+        }
+
+        const riskRes = await fetch(`${BASE}/config/indices/${indexId}/risk`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(riskUpdates),
+        });
+        const riskPayload = await riskRes.json();
+
+        // Capital allocation is account-wide (all indices' % must sum to 100),
+        // so gather ALL cards' current % values, not just this one.
+        const allocations = {};
+        const missingCards = [];
+        document.querySelectorAll("#perIndexSettingsContainer > [data-index]").forEach(c => {
+          const capEl = c.querySelector(".idx-capital-pct");
+          if (!capEl) { missingCards.push(c.dataset.index); return; }
+          allocations[c.dataset.index] = parseFloat(capEl.value);
+        });
+        if (missingCards.length > 0) {
+          statusEl.innerText = `Card(s) missing capital field: ${missingCards.join(", ")} — hard-refresh and try again`;
+          statusEl.style.color = "#f87171";
+          return;
+        }
+        const allocRes = await fetch(`${BASE}/config/capital-allocation`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ allocations }),
+        });
+        const allocPayload = await allocRes.json();
+
+        if (riskPayload.status === "ok" && allocPayload.status === "ok") {
+          statusEl.innerText = "✓ Saved"; statusEl.style.color = "#4ade80";
+          setTimeout(() => { loadPerIndexSettings(); }, 800);  // let the checkmark actually be seen before the card re-renders
+        } else {
+          statusEl.innerText = allocPayload.message || riskPayload.message || "Save failed";
+          statusEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        statusEl.innerText = `Error: ${err.message || err}`; statusEl.style.color = "#f87171";
+        console.error("saveIndexSettings failed:", err);
+      }
+      setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 3000);
+    }
+
+    async function resetIndexSettings(indexId) {
+      try {
+        await fetch(`${BASE}/config/indices/${indexId}/reset`, { method: "POST" });
+        await loadPerIndexSettings();
+      } catch {}
+    }
+
+    document.getElementById("resetAllIndicesBtn").addEventListener("click", async () => {
+      try {
+        await fetch(`${BASE}/config/indices/reset-all`, { method: "POST" });
+        await loadPerIndexSettings();
+      } catch {}
+    });
+
+    document.getElementById("saveAccountConfigBtn").addEventListener("click", async () => {
+      const statusEl = document.getElementById("accountConfigStatus");
+      const autoEntry = document.getElementById("autoEntryToggle").checked;
+      const totalCapital = parseFloat(document.getElementById("totalCapitalInput").value);
+      try {
+        const res = await fetch(`${BASE}/config/account`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_entry_enabled: autoEntry, total_available_capital: totalCapital }),
+        });
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          statusEl.innerText = "✓ Saved"; statusEl.style.color = "#4ade80";
+          await loadPerIndexSettings();  // refresh so per-index rupee amounts reflect new total
+        } else {
+          statusEl.innerText = payload.message || "Save failed"; statusEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        statusEl.innerText = "Failed to reach backend"; statusEl.style.color = "#f87171";
+      }
+      setTimeout(() => { statusEl.innerText = ""; }, 3000);
+    });
+
+    // FIXED A REAL BUG: this function was previously defined INSIDE
+    // the saveAccountConfigBtn click handler above (accidentally
+    // inserted mid-block during an earlier edit), which meant it was
+    // scoped locally to that handler and genuinely inaccessible from
+    // anywhere else -- including loadPerIndexSettings, which calls it
+    // and was throwing "updateLiveTradingStatusNote is not defined" as
+    // a result. Now a real, top-level function, callable from anywhere.
+    function updateLiveTradingStatusNote() {
+      const master = document.getElementById("liveMasterToggle").checked;
+      const noteEl = document.getElementById("liveTradingStatusNote");
+      if (master) {
+        noteEl.innerText = "⚠ Master switch is ON — any index set to Live or Both mode will place REAL orders.";
+        noteEl.style.color = "#f87171";
+      } else {
+        noteEl.innerText = "✓ Master switch is OFF — all trading is simulated (paper), regardless of any index's mode.";
+        noteEl.style.color = "#4ade80";
+      }
+    }
+
+    // Takes effect IMMEDIATELY on click, not bundled with the Save
+    // button below — a real-money safety switch should never wait on
+    // a separate save action, and should always reflect exactly what
+    // the backend currently has, not a locally-buffered unsaved value.
+    document.getElementById("liveMasterToggle").addEventListener("change", async (e) => {
+      const checked = e.target.checked;
+      try {
+        const res = await fetch(`${BASE}/config/account`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ live_trading_master_enabled: checked }),
+        });
+        const payload = await res.json();
+        if (payload.status !== "ok") {
+          alert("Failed to update the live trading master switch. Reverting.");
+          e.target.checked = !checked;
+        }
+      } catch (err) {
+        alert("Failed to reach the backend. The master switch was NOT changed. Reverting.");
+        e.target.checked = !checked;
+      }
+      updateLiveTradingStatusNote();
+    });
+
+    async function refreshAutoEntryCycleStatus() {
+      const box = document.getElementById("autoEntryCycleStatus");
+      try {
+        const res = await fetch(`${BASE}/pollers/status`);
+        const payload = await res.json();
+        const cycle = payload.auto_entry_last_cycle;
+        if (!cycle || Object.keys(cycle).length === 0) {
+          box.innerText = "No cycle data yet — enable auto-entry to see live status here.";
+          return;
+        }
+        box.innerHTML = Object.entries(cycle).map(([idx, info]) => {
+          let color = "var(--text-muted)";
+          let text = info.reason || info.status;
+          if (info.status === "entered_paper") { color = "#4ade80"; text = `Entered paper trade (mode: ${info.mode})`; }
+          else if (info.status === "off") { color = "var(--text-muted)"; text = "Off"; }
+          else if (info.status === "no_trade") { color = "var(--text-muted)"; }
+          else if (info.status === "skipped") { color = "var(--text-muted)"; }
+          return `<div>${idx}: <span style="color:${color}">${text}</span></div>`;
+        }).join("");
+      } catch (err) {
+        box.innerText = `Failed to load auto-entry status: ${err.message}`;
+        box.style.color = "#f87171";
+      }
+    }
+
+    async function refreshPositions() {
+      const body = document.getElementById("positionsBody");
+      try {
+        const res = await fetch(`${BASE}/positions/open`);
+        const payload = await res.json();
+        if (payload.status === "ok" && payload.positions.length > 0) {
+          body.innerHTML = payload.positions.map(p => {
+            const pnl = p.current_price !== null ? ((p.current_price - p.entry_price) * p.lots * p.lot_size) : null;
+            const pnlColor = pnl === null ? "" : (pnl >= 0 ? "#4ade80" : "#f87171");
+            return `<tr>
+              <td>${p.index_id}</td><td>${p.strike}</td><td>${p.option_type}</td><td>${p.direction === "long_call" ? "BULLISH" : "BEARISH"}</td>
+              <td>${p.lots}</td><td>${p.entry_price}</td><td>${p.current_price ?? "—"}</td>
+              <td>${p.peak_profit_pct !== null ? p.peak_profit_pct.toFixed(1) + "%" : "—"}</td>
+              <td style="color:${pnlColor}">${pnl !== null ? pnl.toFixed(0) : "—"}</td>
+              <td>${toISTShort(p.entry_time)}</td>
+              <td><button class="exit-trade-btn" onclick="exitTrade(${p.id}, ${p.current_price ?? p.entry_price}, this)">Exit Trade</button></td>
+            </tr>`;
+          }).join("");
+        } else {
+          body.innerHTML = `<tr><td colspan="11" class="placeholder">No open positions</td></tr>`;
+        }
+        document.getElementById("positionsUpdated").innerText = `${payload.count ?? 0} open`;
+      } catch (err) {
+        body.innerHTML = `<tr><td colspan="11" style="color:#f87171;">Failed to load open positions: ${err.message}. Refresh the page or check the backend.</td></tr>`;
+      }
+    }
+
+    // Manual "Exit Trade" button — real order for real (live-mode)
+    // positions, simulated close for paper positions. Per explicit
+    // request. current_price is the live LTP already shown on screen
+    // for that position, avoiding a redundant second fetch.
+    async function exitTrade(positionId, currentPrice, buttonEl) {
+      const confirmed = confirm(
+        `Exit this position at ~₹${currentPrice}?\n\n` +
+        `If this is a REAL (live-mode) position, this places an ACTUAL sell order on Fyers.`
+      );
+      if (!confirmed) return;
+
+      buttonEl.disabled = true;
+      buttonEl.innerText = "Exiting...";
+
+      try {
+        const res = await fetch(`${BASE}/positions/${positionId}/exit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ current_price: currentPrice }),
+        });
+        const payload = await res.json();
+
+        if (payload.status === "ok") {
+          buttonEl.innerText = "Exited ✓";
+          await refreshPositions();
+          if (typeof refreshTradeLog === "function") refreshTradeLog();
+        } else {
+          alert(`⚠ Exit failed: ${payload.message}\n\nThe position may still be OPEN. Check your Fyers app directly, and retry if needed.`);
+          buttonEl.disabled = false;
+          buttonEl.innerText = "Exit Trade";
+        }
+      } catch (err) {
+        alert("Failed to reach the backend. The position was NOT confirmed exited. Check your connection and retry.");
+        buttonEl.disabled = false;
+        buttonEl.innerText = "Exit Trade";
+      }
+    }
+
+    document.getElementById("clearTradeHistoryBtn").addEventListener("click", async () => {
+      const sure = confirm("This permanently deletes all CLOSED trade history (trade log + closed positions). Currently open positions are NOT affected. This cannot be undone. Continue?");
+      if (!sure) return;
+      try {
+        const res = await fetch(`${BASE}/trade-log/clear?confirm=true`, { method: "POST" });
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          alert(`Cleared: ${payload.trade_log_rows_deleted} trade log rows, ${payload.closed_positions_deleted} closed positions.`);
+          await refreshTradeLog();
+        } else {
+          alert(payload.message || "Clear failed");
+        }
+      } catch {
+        alert("Failed to reach backend");
+      }
+    });
+
+    function getStatsFilterParams() {
+      const params = new URLSearchParams();
+      const start = document.getElementById("statsFilterStart").value;
+      const end = document.getElementById("statsFilterEnd").value;
+      if (start) params.set("start_date", `${start}T00:00:00`);
+      if (end) params.set("end_date", `${end}T23:59:59`);
+      return params;
+    }
+
+    function drawEquityCurve(points) {
+      const canvas = document.getElementById("equityCurveCanvas");
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = canvas.parentElement.clientWidth - 36;
+      const cssHeight = 260;
+      canvas.style.width = cssWidth + "px";
+      canvas.style.height = cssHeight + "px";
+      canvas.width = cssWidth * dpr;
+      canvas.height = cssHeight * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const W = cssWidth, H = cssHeight;
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = "11px Consolas, Menlo, monospace";
+
+      if (!points || points.length === 0) {
+        ctx.fillStyle = "#6b7688";
+        ctx.fillText("No closed trades yet — equity curve will appear here", 20, H / 2);
+        return;
+      }
+
+      const values = points.map(p => p.cumulative_pnl);
+      const maxV = Math.max(...values, 0);
+      const minV = Math.min(...values, 0);
+      const pad = (maxV - minV) * 0.1 || 100;
+      const yMax = maxV + pad, yMin = minV - pad;
+
+      const marginLeft = 80, marginRight = 14, marginTop = 12, marginBottom = 30;
+      const plotW = W - marginLeft - marginRight;
+      const plotH = H - marginTop - marginBottom;
+
+      function yToPixel(v) { return marginTop + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+      function xToPixel(i) { return marginLeft + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW); }
+
+      // Gridlines + y-axis labels
+      ctx.strokeStyle = "#1a202b"; ctx.lineWidth = 1; ctx.fillStyle = "#9ca8b8"; ctx.textAlign = "right";
+      const yTicks = 5;
+      for (let i = 0; i <= yTicks; i++) {
+        const v = yMin + (yMax - yMin) * (i / yTicks);
+        const y = yToPixel(v);
+        ctx.beginPath(); ctx.moveTo(marginLeft, Math.round(y) + 0.5); ctx.lineTo(W - marginRight, Math.round(y) + 0.5); ctx.stroke();
+        ctx.fillText(v.toFixed(0), marginLeft - 8, y + 4);
+      }
+
+      // Zero line, highlighted
+      if (yMin < 0 && yMax > 0) {
+        ctx.strokeStyle = "#6b7688"; ctx.lineWidth = 1;
+        const zeroY = yToPixel(0);
+        ctx.beginPath(); ctx.moveTo(marginLeft, Math.round(zeroY) + 0.5); ctx.lineTo(W - marginRight, Math.round(zeroY) + 0.5); ctx.stroke();
+      }
+
+      // Equity line, colored by whether it ends above or below start
+      const endsPositive = values[values.length - 1] >= 0;
+      ctx.strokeStyle = endsPositive ? "#4ade80" : "#f87171";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const x = xToPixel(i), y = yToPixel(p.cumulative_pnl);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Fill under the curve, subtle
+      ctx.lineTo(xToPixel(points.length - 1), yToPixel(0));
+      ctx.lineTo(xToPixel(0), yToPixel(0));
+      ctx.closePath();
+      ctx.fillStyle = endsPositive ? "#4ade8015" : "#f8717115";
+      ctx.fill();
+
+      // X-axis: first and last date only, to avoid clutter
+      ctx.fillStyle = "#6b7688"; ctx.textAlign = "left";
+      ctx.fillText(toISTDateOnly(points[0].exit_time), marginLeft, H - 8);
+      ctx.textAlign = "right";
+      ctx.fillText(toISTDateOnly(points[points.length - 1].exit_time), W - marginRight, H - 8);
+    }
+
+    function renderStatCard(label, value, color) {
+      return `<div class="card" style="background: var(--card-inset); padding: 10px 14px;">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value" style="font-size: 16px; ${color ? `color:${color};` : ''}">${value}</div>
+      </div>`;
+    }
+
+    async function refreshTradeLog() {
+      const filterParams = getStatsFilterParams();
+
+      try {
+        const res = await fetch(`${BASE}/trade-log?limit=200`);
+        const payload = await res.json();
+        let trades = payload.status === "ok" ? payload.trades : [];
+
+        // Apply outcome filter client-side (date already applied server-side via detailed-stats,
+        // but the raw /trade-log list endpoint doesn't take filters, so we filter here for the table too)
+        const outcomeFilter = document.getElementById("statsFilterOutcome").value;
+        const startFilter = document.getElementById("statsFilterStart").value;
+        const endFilter = document.getElementById("statsFilterEnd").value;
+        if (outcomeFilter === "win") trades = trades.filter(t => t.pnl > 0);
+        if (outcomeFilter === "loss") trades = trades.filter(t => t.pnl <= 0);
+        if (startFilter) trades = trades.filter(t => t.exit_time >= `${startFilter}T00:00:00`);
+        if (endFilter) trades = trades.filter(t => t.exit_time <= `${endFilter}T23:59:59`);
+
+        const body = document.getElementById("tradeLogBody");
+        if (trades.length > 0) {
+          body.innerHTML = trades.map(t => {
+            const pnlColor = t.pnl >= 0 ? "#4ade80" : "#f87171";
+            return `<tr>
+              <td>${t.index_id}</td><td>${t.strike}</td><td>${t.direction === "long_call" ? "BULLISH" : "BEARISH"}</td>
+              <td>${t.lots}</td>
+              <td>${toISTDateOnly(t.entry_time)}</td><td>${toISTTimeOnly(t.entry_time)}</td><td>${t.entry_price}</td>
+              <td>${toISTDateOnly(t.exit_time)}</td><td>${toISTTimeOnly(t.exit_time)}</td><td>${t.exit_price}</td>
+              <td>${t.exit_reason}</td>
+              <td style="color:${pnlColor}">${t.pnl.toFixed(0)}</td>
+              <td style="color:${pnlColor}">${t.pnl_pct.toFixed(1)}%</td>
+              <td>${t.hold_minutes !== null ? t.hold_minutes.toFixed(0) : "—"}</td>
+            </tr>`;
+          }).join("");
+        } else {
+          body.innerHTML = `<tr><td colspan="14" class="placeholder">No trades match the current filters</td></tr>`;
+        }
+        document.getElementById("tradeLogUpdated").innerText = `${trades.length} trades shown`;
+      } catch {}
+
+      try {
+        const statsRes = await fetch(`${BASE}/trade-log/detailed-stats?${filterParams.toString()}`);
+        const stats = await statsRes.json();
+        const grid = document.getElementById("statsCardsGrid");
+        if (stats.status === "ok" && stats.trade_count > 0) {
+          const pnlColor = stats.total_pnl >= 0 ? "#4ade80" : "#f87171";
+          grid.innerHTML = [
+            renderStatCard("Trades", stats.trade_count),
+            renderStatCard("Win Rate", `${(stats.win_rate * 100).toFixed(0)}%`, stats.win_rate >= 0.5 ? "#4ade80" : "#f87171"),
+            renderStatCard("Total P&L", stats.total_pnl.toLocaleString(), pnlColor),
+            renderStatCard("Profit Factor", stats.profit_factor ?? "—", stats.profit_factor >= 1 ? "#4ade80" : "#f87171"),
+            renderStatCard("Avg Win", `${stats.avg_win_pct ?? "—"}%`, "#4ade80"),
+            renderStatCard("Avg Loss", `${stats.avg_loss_pct ?? "—"}%`, "#f87171"),
+            renderStatCard("Best Trade", stats.best_trade_pnl.toLocaleString(), "#4ade80"),
+            renderStatCard("Worst Trade", stats.worst_trade_pnl.toLocaleString(), "#f87171"),
+            renderStatCard("Max Drawdown", `${stats.max_drawdown_pct}%`, "#fbbf24"),
+          ].join("");
+          drawEquityCurve(stats.equity_curve);
+          document.getElementById("equityCurveInfo").innerText =
+            `${stats.equity_curve.length} trades plotted · final cumulative P&L: ${stats.total_pnl.toLocaleString()}`;
+        } else {
+          grid.innerHTML = `<div class="placeholder" style="grid-column: 1 / -1;">No trades match the current filters</div>`;
+          drawEquityCurve([]);
+          document.getElementById("equityCurveInfo").innerText = "";
+        }
+      } catch {}
+    }
+
+    async function refreshRejectionLog() {
+      const body = document.getElementById("rejectionLogBody");
+      try {
+        const res = await fetch(`${BASE}/rejection-log`);
+        const payload = await res.json();
+        if (payload.status === "ok" && payload.count > 0) {
+          body.innerHTML = payload.rejections.map(r => `
+            <tr>
+              <td style="font-family:monospace; font-size:11px;">${r.timestamp}</td>
+              <td>${r.index_id}</td>
+              <td>${r.attempted_action}</td>
+              <td style="color:#f87171;">${r.reason}</td>
+            </tr>
+          `).join("");
+        } else {
+          body.innerHTML = `<tr><td colspan="4" class="placeholder">No rejections recorded.</td></tr>`;
+        }
+      } catch {
+        body.innerHTML = `<tr><td colspan="4" class="placeholder" style="color:#f87171;">Failed to load rejection log.</td></tr>`;
+      }
+    }
+
+    document.getElementById("applyStatsFilterBtn").addEventListener("click", refreshTradeLog);
+
+    document.getElementById("resetStatsFilterBtn").addEventListener("click", () => {
+      document.getElementById("statsFilterStart").value = "";
+      document.getElementById("statsFilterEnd").value = "";
+      document.getElementById("statsFilterOutcome").value = "";
+      refreshTradeLog();
+    });
+
+    document.getElementById("downloadCsvBtn").addEventListener("click", () => {
+      const params = getStatsFilterParams();
+      window.open(`${BASE}/trade-log/export?${params.toString()}`, "_blank");
+    });
+
+    document.getElementById("restoreDataBtn").addEventListener("click", async () => {
+      const statusEl = document.getElementById("restoreStatus");
+      statusEl.innerText = "Restoring historical data — this can take up to ~30 seconds...";
+      try {
+        const res = await fetch(`${BASE}/backfill/all?days=30`);
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          statusEl.innerText = "✓ Historical data restored for all indices.";
+          statusEl.style.color = "#4ade80";
+          await refreshCandleCounts();
+        } else {
+          statusEl.innerText = `Error: ${payload.message}`;
+          statusEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        statusEl.innerText = "Failed to reach backend.";
+        statusEl.style.color = "#f87171";
+      }
+    });
+
+    document.getElementById("restoreDataExtendedBtn").addEventListener("click", async () => {
+      const statusEl = document.getElementById("restoreStatus");
+      statusEl.innerText = "Fetching ~6 months of real Nifty history (candles + volume) — this can take several minutes, please wait...";
+      statusEl.style.color = "";
+      try {
+        const res = await fetch(`${BASE}/backfill/extended/NIFTY50?days=180`);
+        const payload = await res.json();
+        if (payload.status === "ok" || payload.status === "partial") {
+          const errNote = payload.errors && payload.errors.length ? ` (${payload.errors.length} chunk(s) had issues — see server log)` : "";
+          statusEl.innerText = `✓ 6-month backfill complete: ${payload.total_inserted} candles inserted across ${payload.chunks_run} request(s)${errNote}. VWAP now has real historical volume to work with.`;
+          statusEl.style.color = payload.status === "ok" ? "#4ade80" : "#fbbf24";
+          await refreshCandleCounts();
+        } else {
+          statusEl.innerText = `Error: ${payload.message}`;
+          statusEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        statusEl.innerText = "Failed to reach backend during extended backfill.";
+        statusEl.style.color = "#f87171";
+      }
+    });
+
+    async function refreshPollerStatus() {
+      try {
+        const res = await fetch(`${BASE}/pollers/status`);
+        const payload = await res.json();
+        if (payload.status !== "ok") return;
+        const badge = document.getElementById("pollerBadge");
+        const allRunning = Object.values(payload.pollers).slice(0, 3).every(p => p.running);
+        const anyErrors = Object.values(payload.pollers).slice(0, 3).some(p => p.consecutive_errors > 3);
+        if (anyErrors) {
+          badge.className = "badge token-badge-stale";
+          badge.innerText = "ENGINE: ERRORS";
+        } else if (allRunning) {
+          badge.className = "badge token-badge-ok";
+          badge.innerText = "ENGINE: LIVE";
+        } else {
+          badge.className = "badge token-badge-stale";
+          badge.innerText = "ENGINE: STARTING";
+        }
+      } catch {}
+    }
+
+    async function refreshAll() {
+      await refreshConn();
+      await refreshTokenStatus();
+      await refreshPollerStatus();
+      await refreshDashboard();
+      if (document.getElementById("tab-chain").style.display !== "none") {
+        await refreshOptionChain();
+      }
+      if (document.getElementById("tab-charts").style.display !== "none") {
+        await refreshChart();
+        await refreshCandleCounts();
+      }
+      if (document.getElementById("tab-positions").style.display !== "none") {
+        await refreshPositions();
+        await refreshAutoEntryCycleStatus();
+      }
+      if (document.getElementById("tab-tradelog").style.display !== "none") {
+        await refreshTradeLog();
+      }
+    }
+
+    // Backend now serves everything from in-memory shared_state (populated
+    // by background pollers running independently of the frontend), so
+    // polling here is cheap and safe — no Fyers calls happen per request.
+    refreshAll();
+
+    // Real NSE trading-holiday dates for 2026, sourced from official/
+    // broker-published calendars (weekend-falling holidays and MCX-only
+    // dates excluded, since those don't affect NSE equity/derivatives
+    // trading days). Purely client-side, informational — does not stop
+    // or gate any trading logic; the backend's own market-hours check
+    // (9:00 AM - 3:40 PM IST, weekdays) is the real gate for polling.
+    const NSE_HOLIDAYS_2026 = [
+      "2026-01-15", // Municipal Corporation Elections in Maharashtra
+      "2026-01-26", // Republic Day
+      "2026-03-03", // Holi
+      "2026-03-26", // Shri Ram Navami
+      "2026-03-31", // Shri Mahavir Jayanti
+      "2026-04-03", // Good Friday
+      "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
+      "2026-05-01", // Maharashtra Day
+      "2026-05-28", // Bakri Eid
+      "2026-06-26", // Moharram
+      "2026-09-14", // Ganesh Chaturthi
+      "2026-10-02", // Mahatma Gandhi Jayanti
+      "2026-10-20", // Dussehra
+      "2026-11-10", // Diwali-Balipratipada
+      "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
+      "2026-12-25", // Christmas
+    ];
+    const NSE_HOLIDAY_NAMES = {
+      "2026-01-15": "Municipal Corporation Elections (Maharashtra)", "2026-01-26": "Republic Day",
+      "2026-03-03": "Holi", "2026-03-26": "Shri Ram Navami", "2026-03-31": "Shri Mahavir Jayanti",
+      "2026-04-03": "Good Friday", "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti", "2026-05-01": "Maharashtra Day",
+      "2026-05-28": "Bakri Eid", "2026-06-26": "Moharram", "2026-09-14": "Ganesh Chaturthi",
+      "2026-10-02": "Mahatma Gandhi Jayanti", "2026-10-20": "Dussehra", "2026-11-10": "Diwali-Balipratipada",
+      "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev", "2026-12-25": "Christmas",
+    };
+
+    function checkHolidayBanner() {
+      const banner = document.getElementById("holidayBanner");
+      const now = new Date();
+      // Format as YYYY-MM-DD in the browser's local time, which for
+      // this app's real user is IST -- matches the date keys above.
+      const todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+      const dayOfWeek = now.getDay(); // 0=Sunday, 6=Saturday
+
+      if (NSE_HOLIDAYS_2026.includes(todayStr)) {
+        banner.style.display = "block";
+        banner.style.background = "rgba(248,113,113,0.12)";
+        banner.style.border = "1px solid #f87171";
+        banner.style.color = "#f87171";
+        banner.innerText = `⚠ NSE Trading Holiday today: ${NSE_HOLIDAY_NAMES[todayStr]}. The market is closed — no live prices, no trading, regardless of what the engine status shows.`;
+        return;
+      }
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        banner.style.display = "block";
+        banner.style.background = "rgba(148,163,184,0.10)";
+        banner.style.border = "1px solid var(--border-default)";
+        banner.style.color = "var(--text-muted)";
+        banner.innerText = "Weekend — NSE market is closed today.";
+        return;
+      }
+
+      // Not a holiday/weekend -- check if TOMORROW is a holiday, so a
+      // person opening the app late in the day still gets a useful
+      // heads-up before the next real trading gap.
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.getFullYear() + "-" + String(tomorrow.getMonth() + 1).padStart(2, "0") + "-" + String(tomorrow.getDate()).padStart(2, "0");
+      if (NSE_HOLIDAYS_2026.includes(tomorrowStr)) {
+        banner.style.display = "block";
+        banner.style.background = "rgba(251,191,36,0.10)";
+        banner.style.border = "1px solid #fbbf24";
+        banner.style.color = "#fbbf24";
+        banner.innerText = `Note: tomorrow (${tomorrowStr}) is an NSE trading holiday — ${NSE_HOLIDAY_NAMES[tomorrowStr]}. No trading tomorrow.`;
+        return;
+      }
+
+      banner.style.display = "none";
+    }
+    checkHolidayBanner();
+
+    function renderBacktestSummary(label, summary) {
+      if (!summary || summary.trade_count === 0) {
+        return `<div style="margin-bottom: 12px;"><strong>${label}</strong>: no trades generated</div>`;
+      }
+      const pnlColor = summary.total_pnl >= 0 ? "#4ade80" : "#f87171";
+      return `<div style="margin-bottom: 14px; padding: 10px; border: 1px solid var(--border-default); border-radius: 4px;">
+        <strong>${label}</strong> — ${summary.trade_count} trades
+        <div style="margin-top: 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px;">
+          <div>Win rate: <span style="color:${summary.win_rate >= 0.5 ? '#4ade80' : '#f87171'}">${(summary.win_rate * 100).toFixed(0)}%</span></div>
+          <div>Total P&L: <span style="color:${pnlColor}">${summary.total_pnl.toLocaleString()}</span></div>
+          <div>Return: <span style="color:${pnlColor}">${summary.return_pct}%</span></div>
+          <div>Final capital: ${summary.final_capital.toLocaleString()}</div>
+          <div>Max drawdown: ${summary.max_drawdown_pct}%</div>
+          <div>Avg win/loss: ${summary.avg_win_pct ?? '—'}% / ${summary.avg_loss_pct ?? '—'}%</div>
+        </div>
+      </div>`;
+    }
+
+    let lastBacktestRunId = null;
+    let lastBacktestParams = null;
+
+    const RISK_SETTINGS_LABELS = {
+      hard_sl_pct: "Hard SL %", time_stop_minutes: "Time Stop (min)",
+      tsl_activation_pct: "TSL Activation %", tsl_base_trail_pct: "TSL Base Trail %",
+      tsl_k: "TSL Tighten Rate (k)", tsl_floor_pct: "TSL Floor %",
+      risk_per_trade_pct: "Risk/Trade %", min_confluence_confidence: "Min Confidence",
+      max_entry_iv_rank: "Max Entry IV Rank",
+    };
+
+    // Settings are now per-index (Positions & Risk tab is the source of
+    // truth for editing them) — this panel just displays whichever
+    // index is currently selected in the backtest form, read-only,
+    // for reference while choosing override values below.
+    async function loadRiskSettings() {
+      try {
+        const selectedIndex = "NIFTY50";
+        const res = await fetch(`${BASE}/config/indices/${selectedIndex}`);
+        const payload = await res.json();
+        if (payload.status !== "ok") return;
+        const riskParams = payload.config.risk_params;
+        const table = document.getElementById("riskSettingsTable");
+        table.innerHTML = `<div style="grid-column: 1 / -1; margin-bottom:6px; color: var(--text-muted);">
+            Showing ${selectedIndex} (mode: ${payload.config.mode}, capital: ₹${payload.config.capital_rupees?.toLocaleString()}) —
+            edit per-index settings on the Positions &amp; Risk tab.</div>` +
+          Object.entries(riskParams).map(([key, val]) => {
+            const label = RISK_SETTINGS_LABELS[key] || key;
+            const displayVal = val === null ? "off" : val;
+            return `<div><span style="color: var(--text-muted);">${label}:</span> <strong>${displayVal}</strong></div>`;
+          }).join("");
+
+        document.getElementById("ovHardSl").placeholder = riskParams.hard_sl_pct;
+        document.getElementById("ovTimeStop").placeholder = riskParams.time_stop_minutes;
+        document.getElementById("ovTslActivation").placeholder = riskParams.tsl_activation_pct;
+        document.getElementById("ovTslBase").placeholder = riskParams.tsl_base_trail_pct;
+        document.getElementById("ovRiskPerTrade").placeholder = riskParams.risk_per_trade_pct;
+        document.getElementById("ovMinConfidence").placeholder = riskParams.min_confluence_confidence;
+      } catch {}
+    }
+
+    document.getElementById("resetSettingsBtn").addEventListener("click", async () => {
+      const statusEl = document.getElementById("resetStatus");
+      try {
+        const selectedIndex = "NIFTY50";
+        const res = await fetch(`${BASE}/config/indices/${selectedIndex}/reset`, { method: "POST" });
+        const payload = await res.json();
+        if (payload.status === "ok") {
+          statusEl.innerText = `✓ ${selectedIndex} reset to defaults`;
+          statusEl.style.color = "#4ade80";
+          await loadRiskSettings();
+        } else {
+          statusEl.innerText = "Reset failed";
+          statusEl.style.color = "#f87171";
+        }
+      } catch {
+        statusEl.innerText = "Failed to reach backend";
+        statusEl.style.color = "#f87171";
+      }
+      setTimeout(() => { statusEl.innerText = ""; }, 3000);
+    });
+
+    async function loadBacktestHistory() {
+      try {
+        const res = await fetch(`${BASE}/backtest/history?limit=15`);
+        const payload = await res.json();
+        const body = document.getElementById("backtestHistoryBody");
+        if (payload.status === "ok" && payload.runs.length > 0) {
+          body.innerHTML = payload.runs.map(r => `<tr>
+            <td>${r.index_id}</td><td>${r.mode}</td><td>${r.trade_count ?? "—"}</td>
+            <td>${r.win_rate !== null ? (r.win_rate * 100).toFixed(0) + "%" : "—"}</td>
+            <td style="color:${(r.return_pct||0) >= 0 ? '#4ade80' : '#f87171'}">${r.return_pct ?? "—"}%</td>
+            <td>${r.max_drawdown_pct ?? "—"}%</td>
+            <td>${r.applied_to_live ? "✓" : "—"}</td>
+            <td>${toISTShort(r.created_at)}</td>
+          </tr>`).join("");
+        } else {
+          body.innerHTML = `<tr><td colspan="8" class="placeholder">No backtest runs yet</td></tr>`;
+        }
+      } catch {}
+    }
+
+    document.getElementById("runBacktestBtn").addEventListener("click", async () => {
+      const index = "NIFTY50";
+      const walkForward = document.getElementById("btWalkForward").checked;
+      const statusEl = document.getElementById("backtestStatus");
+      const noteEl = document.getElementById("backtestNote");
+      const resultsBox = document.getElementById("backtestResultsBox");
+      const resultsContent = document.getElementById("backtestResultsContent");
+      const applyBtn = document.getElementById("applyBacktestBtn");
+      document.getElementById("applyConfirmBox").style.display = "none";
+
+      statusEl.innerText = "Running backtest — this may take a few seconds...";
+      statusEl.style.color = "";
+      resultsBox.style.display = "none";
+      applyBtn.style.display = "none";
+
+      const params = new URLSearchParams({ walk_forward: walkForward });
+      const ov = {
+        hard_sl_pct: document.getElementById("ovHardSl").value,
+        time_stop_minutes: document.getElementById("ovTimeStop").value,
+        tsl_activation_pct: document.getElementById("ovTslActivation").value,
+        tsl_base_trail_pct: document.getElementById("ovTslBase").value,
+        risk_per_trade_pct: document.getElementById("ovRiskPerTrade").value,
+        min_confidence: document.getElementById("ovMinConfidence").value,
+      };
+      for (const [k, v] of Object.entries(ov)) {
+        if (v !== "") params.set(k, v);
+      }
+
+      try {
+        const res = await fetch(`${BASE}/backtest/run/${index}?${params.toString()}`);
+        const payload = await res.json();
+
+        if (payload.status !== "ok") {
+          statusEl.innerText = payload.message || "Backtest failed";
+          statusEl.style.color = "#f87171";
+          return;
+        }
+
+        statusEl.innerText = "✓ Backtest complete";
+        statusEl.style.color = "#4ade80";
+        resultsBox.style.display = "block";
+        lastBacktestParams = payload.params_used;
+
+        if (payload.mode === "walk_forward") {
+          resultsContent.innerHTML =
+            renderBacktestSummary(`Train (${payload.train_candle_count} candles)`, payload.train.summary) +
+            renderBacktestSummary(`Test (${payload.test_candle_count} candles)`, payload.test.summary);
+          noteEl.innerText = payload.note + " " + (payload.train.note || "");
+          lastBacktestRunId = payload.test.backtest_run_id;
+        } else {
+          resultsContent.innerHTML = renderBacktestSummary(`Full history (${payload.candle_count} candles)`, payload.summary);
+          noteEl.innerText = payload.note || "";
+          lastBacktestRunId = payload.backtest_run_id;
+        }
+
+        if (lastBacktestRunId) {
+          applyBtn.style.display = "inline-block";
+        }
+        await loadBacktestHistory();
+      } catch {
+        statusEl.innerText = "Failed to reach backend";
+        statusEl.style.color = "#f87171";
+      }
+    });
+
+    document.getElementById("applyBacktestBtn").addEventListener("click", async () => {
+      const confirmBox = document.getElementById("applyConfirmBox");
+      const selectedIndex = "NIFTY50";
+      if (confirmBox.style.display === "none") {
+        // First click: show the diff, don't apply yet
+        const liveRes = await fetch(`${BASE}/config/indices/${selectedIndex}`);
+        const livePayload = await liveRes.json();
+        const live = livePayload.config.risk_params;
+
+        let diffHtml = `<strong>This will change ${selectedIndex}'s LIVE settings:</strong><br>`;
+        const keyMap = { min_confidence: "min_confluence_confidence" };
+        for (const [k, v] of Object.entries(lastBacktestParams)) {
+          if (k === "initial_capital") continue;
+          const liveKey = keyMap[k] || k;
+          const liveVal = live[liveKey];
+          if (liveVal !== v) {
+            diffHtml += `${RISK_SETTINGS_LABELS[liveKey] || liveKey}: ${liveVal} → <strong>${v}</strong><br>`;
+          }
+        }
+        diffHtml += `<button id="confirmApplyBtn" style="margin-top:8px; padding: 5px 12px; background: #fbbf24; color: #0a0e14; border: none; border-radius: 3px; cursor: pointer; font-family: inherit;">Confirm Apply</button>`;
+        confirmBox.innerHTML = diffHtml;
+        confirmBox.style.display = "block";
+
+        document.getElementById("confirmApplyBtn").addEventListener("click", async () => {
+          try {
+            const res = await fetch(`${BASE}/backtest/apply`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: lastBacktestRunId, index_id: selectedIndex, params: lastBacktestParams }),
+            });
+            const payload = await res.json();
+            if (payload.status === "ok") {
+              confirmBox.innerHTML = `<span style="color:#4ade80;">✓ Applied to ${selectedIndex}'s live settings</span>`;
+              await loadRiskSettings();
+              await loadBacktestHistory();
+            } else {
+              confirmBox.innerHTML = `<span style="color:#f87171;">${payload.message || "Apply failed"}</span>`;
+            }
+          } catch {
+            confirmBox.innerHTML = `<span style="color:#f87171;">Failed to reach backend</span>`;
+          }
+        });
+      }
+    });
+
+    loadPerIndexSettings();
+    loadRiskSettings();
+    loadBacktestHistory();
+    setInterval(refreshAll, 2000);
+
+    // Real-time price push via WebSocket -- the 2-second refreshAll
+    // poll above remains as a fallback for everything else and for
+    // reconnection recovery, but price cards now update the INSTANT a
+    // tick arrives from the backend's WebSocket-driven price_poller,
+    // not on the next poll tick. Reconnects automatically on drop.
+    function connectPricesWebSocket() {
+      const wsUrl = BASE.replace("http://", "ws://").replace("https://", "wss://") + "/ws/prices";
+      const ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "prices" && msg.data) {
+            const grid = document.getElementById("dashboardGrid");
+            if (grid) {
+              grid.innerHTML = Object.keys(LABELS).map((k) => renderCard(k, msg.data[k])).join("");
+              document.getElementById("dashboardUpdated").innerText = `updated ${new Date().toLocaleTimeString("en-IN")} IST (live)`;
+            }
+          }
+        } catch (err) {
+          console.error("prices WebSocket message error:", err);
+        }
+      };
+
+      ws.onclose = () => {
+        // Reconnect after a short delay rather than leaving the
+        // connection dead -- refreshAll's 2s poll keeps things
+        // working in the meantime.
+        setTimeout(connectPricesWebSocket, 2000);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+    connectPricesWebSocket();
+  </script>
+</body>
+</html>

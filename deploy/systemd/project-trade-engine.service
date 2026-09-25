@@ -1,0 +1,14 @@
+[Unit]
+Description=Project Trade — trading engine (cloud-primary, PRD §10.1)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/project-trade
+EnvironmentFile=/opt/project-trade/.env
+ExecStart=/opt/project-trade/venv/bin/python scripts/run_paper.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

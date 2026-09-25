@@ -1,0 +1,21 @@
+{
+  "productName": "Project Trade",
+  "version": "0.2.0",
+  "identifier": "in.projecttrade.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ../frontend",
+    "beforeBuildCommand": "npm run build --prefix ../frontend",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      { "title": "Project Trade", "width": 1600, "height": 1000, "resizable": true }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"]
+  }
+}

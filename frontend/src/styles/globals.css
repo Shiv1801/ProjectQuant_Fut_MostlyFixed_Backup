@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* PRD §7.5 non-negotiables: no gradients, no drop shadows, no rounded pill cards, no light mode */
+body { background-color: #0a0e14; }
+* { border-radius: 4px !important; box-shadow: none !important; }

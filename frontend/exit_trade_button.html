@@ -1,0 +1,75 @@
+<!--
+  Manual "Exit Trade" button for open positions. Integrate into the
+  Positions & Risk (or Trade Log's open-positions view). Assumes each
+  open-position row already displays position.id and the live current
+  price (current_price) -- both needed to build the exit request.
+-->
+
+<style>
+  .exit-trade-btn {
+    background: #f87171;
+    color: #0a0e14;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 12px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .exit-trade-btn:hover { background: #ef4444; }
+  .exit-trade-btn:disabled { background: var(--card-inset); color: var(--text-muted); cursor: not-allowed; }
+</style>
+
+<script>
+  /**
+   * Call this from an open position row's Exit button, e.g.:
+   *   <button class="exit-trade-btn" onclick="exitTrade(${position.id}, ${position.current_price}, this)">Exit Trade</button>
+   *
+   * position.current_price should be the live LTP already shown on
+   * screen for that position -- the backend uses exactly this value
+   * to compute the real/simulated exit price and P&L, avoiding a
+   * redundant, possibly-stale second fetch.
+   */
+  async function exitTrade(positionId, currentPrice, buttonEl) {
+    const confirmed = confirm(
+      `Exit this position at ~₹${currentPrice}?\n\n` +
+      `If this is a REAL (live-mode) position, this places an ACTUAL sell order on Fyers.`
+    );
+    if (!confirmed) return;
+
+    buttonEl.disabled = true;
+    buttonEl.innerText = "Exiting...";
+
+    try {
+      const res = await fetch(`${BASE}/positions/${positionId}/exit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_price: currentPrice }),
+      });
+      const payload = await res.json();
+
+      if (payload.status === "ok") {
+        buttonEl.innerText = "Exited ✓";
+        // Refresh whichever view is showing open positions, so the
+        // now-closed trade drops out of the open list and appears in
+        // Trade Log with its full action history (including this
+        // manual_exit) available via the expand panel.
+        if (typeof refreshOpenPositions === "function") refreshOpenPositions();
+        if (typeof refreshTradeLog === "function") refreshTradeLog();
+      } else {
+        // A rejected REAL exit is a serious, real situation -- the
+        // position may still genuinely be open on Fyers. Surface this
+        // clearly rather than a generic toast, and re-enable the
+        // button so the person can immediately retry.
+        alert(`⚠ Exit failed: ${payload.message}\n\nThe position may still be OPEN. Check your Fyers app directly, and retry if needed.`);
+        buttonEl.disabled = false;
+        buttonEl.innerText = "Exit Trade";
+      }
+    } catch (err) {
+      alert("Failed to reach the backend. The position was NOT confirmed exited. Check your connection and retry.");
+      buttonEl.disabled = false;
+      buttonEl.innerText = "Exit Trade";
+    }
+  }
+</script>

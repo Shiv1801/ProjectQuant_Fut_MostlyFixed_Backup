@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Fyers token refresh trigger (tokens expire daily, PRD §7.4)
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

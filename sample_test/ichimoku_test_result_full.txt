@@ -1,0 +1,22 @@
+======================================================================
+ICHIMOKU TENKAN(9)/KIJUN(26) CROSS ALIGNMENT TEST
+(NO EXCLUSIONS -- full trade set including low-premium outliers)
+======================================================================
+
+WITH Tenkan/Kijun cross signal:
+  Trades: 261
+  Win rate: 47.5%
+  Total P&L: -22,223.50
+  Avg P&L per trade: -85.15
+
+AGAINST Tenkan/Kijun cross signal:
+  Trades: 2143
+  Win rate: 39.3%
+  Total P&L: 743,026.25
+  Avg P&L per trade: 346.72
+
+----------------------------------------------------------------------
+VERDICT:
+  No large, clear difference between the two groups in this (cleaned) data.
+
+  No clear difference

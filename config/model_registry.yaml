@@ -1,0 +1,102 @@
+# Registry of §3.5 quant models — used by engine/model_layer to know what to load.
+models:
+  # Group A — Volatility Estimation
+  - id: realized_vol_multiwindow
+    group: A
+    module: engine.signal_layer.volatility.realized_vol
+  - id: parkinson_estimator
+    group: A
+    module: engine.signal_layer.volatility.parkinson
+  - id: garman_klass_estimator
+    group: A
+    module: engine.signal_layer.volatility.garman_klass
+  - id: garch_1_1
+    group: A
+    module: engine.signal_layer.volatility.garch
+  - id: ewma_vol
+    group: A
+    module: engine.signal_layer.volatility.ewma
+
+  # Group B — VRP & Options Pricing Edge
+  - id: variance_risk_premium
+    group: B
+    module: engine.signal_layer.vrp_pricing.vrp
+  - id: greeks_engine
+    group: B
+    module: engine.signal_layer.vrp_pricing.greeks
+  - id: iv_rank_percentile
+    group: B
+    module: engine.signal_layer.vrp_pricing.iv_rank
+  - id: iv_skew
+    group: B
+    module: engine.signal_layer.vrp_pricing.iv_skew
+  - id: iv_term_structure
+    group: B
+    module: engine.signal_layer.vrp_pricing.iv_term_structure
+
+  # Group C — Momentum / Directional
+  - id: hurst_exponent
+    group: C
+    module: engine.signal_layer.momentum.hurst
+  - id: order_flow_imbalance
+    group: C
+    module: engine.signal_layer.momentum.ofi
+  - id: tick_momentum_acceleration
+    group: C
+    module: engine.signal_layer.momentum.tick_momentum
+  - id: autocorrelation_variance_ratio
+    group: C
+    module: engine.signal_layer.momentum.variance_ratio
+  - id: zscore_price_deviation
+    group: C
+    module: engine.signal_layer.momentum.zscore
+
+  # Group D — Market Structure / Positioning
+  - id: gamma_exposure
+    group: D
+    module: engine.signal_layer.market_structure.gex
+  - id: put_call_ratio_oi
+    group: D
+    module: engine.signal_layer.market_structure.pcr
+  - id: max_pain
+    group: D
+    module: engine.signal_layer.market_structure.max_pain
+  - id: oi_change_analysis
+    group: D
+    module: engine.signal_layer.market_structure.oi_change
+
+  # Group E — Regime Detection
+  - id: vix_level_roc
+    group: E
+    module: engine.signal_layer.regime.vix_regime
+  - id: realized_implied_ratio
+    group: E
+    module: engine.signal_layer.regime.rv_iv_ratio
+  - id: correlation_breakdown
+    group: E
+    module: engine.signal_layer.regime.correlation
+  - id: regime_chop_classifier   # Model F, PRD §9.1 suggestion
+    group: F
+    module: engine.signal_layer.regime.chop_classifier
+    status: roadmap
+
+  # Group F — Position Sizing
+  - id: fractional_kelly
+    group: F
+    module: engine.signal_layer.position_sizing.kelly
+  - id: vol_scaled_sizing
+    group: F
+    module: engine.signal_layer.position_sizing.vol_scaled
+
+  # Group G — ML Layer
+  - id: gbt_ensemble_classifier
+    group: G
+    module: engine.signal_layer.ml_ensemble.gbt_classifier
+  - id: walk_forward_ensemble_weighting
+    group: G
+    module: engine.signal_layer.ml_ensemble.ensemble_weighting
+
+  # Model E — In-Trade Rejection Detector (PRD §4.8.2b)
+  - id: in_trade_rejection_detector
+    group: model_layer
+    module: engine.model_layer.rejection_detector

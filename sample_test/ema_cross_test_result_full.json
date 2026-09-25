@@ -1,0 +1,15 @@
+{
+  "WITH EMA cross signal": {
+    "trades": 58,
+    "win_rate": 46.6,
+    "total_pnl": 184575.0,
+    "avg_pnl": 3182.33
+  },
+  "AGAINST EMA cross signal": {
+    "trades": 2346,
+    "win_rate": 40.0,
+    "total_pnl": 536227.75,
+    "avg_pnl": 228.57
+  },
+  "verdict": "SUPPORTS adding an EMA cross filter"
+}

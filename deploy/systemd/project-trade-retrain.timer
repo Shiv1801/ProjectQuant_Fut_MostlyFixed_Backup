@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly ML retrain trigger (PRD §4.7 — weekly-batch, not literal daily)
+
+[Timer]
+OnCalendar=Sun *-*-* 20:00:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

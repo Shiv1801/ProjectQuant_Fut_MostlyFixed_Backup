@@ -1,0 +1,23 @@
+# Instrument universe (PRD §4.1)
+indices:
+  - id: NIFTY50
+    fyers_symbol: "NSE:NIFTY50-INDEX"
+    lot_size: 25
+    priority: 1
+    expiries: [weekly, monthly]
+  - id: BANKNIFTY
+    fyers_symbol: "NSE:NIFTYBANK-INDEX"
+    lot_size: 15
+    priority: 2
+    expiries: [weekly, monthly]
+  - id: FINNIFTY
+    fyers_symbol: "NSE:FINNIFTY-INDEX"
+    lot_size: 40
+    priority: 3
+    expiries: [weekly, monthly]
+
+vix_symbol: "NSE:INDIAVIX-INDEX"
+
+# Correlation-aware exposure cap (PRD §4.8.5)
+correlation_window_days: 20
+high_correlation_threshold: 0.75

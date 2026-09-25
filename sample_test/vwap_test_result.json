@@ -1,0 +1,15 @@
+{
+  "WITH VWAP signal": {
+    "trades": 340,
+    "win_rate": 45.6,
+    "total_pnl": 189784.75,
+    "avg_pnl": 558.19
+  },
+  "AGAINST VWAP signal": {
+    "trades": 645,
+    "win_rate": 39.1,
+    "total_pnl": 104058.25,
+    "avg_pnl": 161.33
+  },
+  "verdict": "SUPPORTS adding a VWAP filter"
+}

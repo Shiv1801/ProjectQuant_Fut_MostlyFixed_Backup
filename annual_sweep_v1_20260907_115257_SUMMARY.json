@@ -1,0 +1,459 @@
+{
+  "run_id": "20260907_115257",
+  "generated_at": "2026-09-07T13:06:55.437379",
+  "grid_size_per_index_per_mode": 6600,
+  "capital_per_index": 50000.0,
+  "best_per_index": {
+    "NIFTY50": {
+      "trade_count": 300,
+      "win_rate": 0.5367,
+      "return_pct": 14.871,
+      "max_drawdown_pct": 11.542,
+      "avg_win_pct": 9.247,
+      "avg_loss_pct": 9.356,
+      "final_capital": 57435.31,
+      "monthwise": {
+        "2026-05": {
+          "trades": 18,
+          "win_rate": 0.6111,
+          "pnl": 1993.69,
+          "return_pct": 3.987
+        },
+        "2026-06": {
+          "trades": 86,
+          "win_rate": 0.5233,
+          "pnl": 1910.12,
+          "return_pct": 3.82
+        },
+        "2026-07": {
+          "trades": 87,
+          "win_rate": 0.5747,
+          "pnl": 1934.63,
+          "return_pct": 3.869
+        },
+        "2026-08": {
+          "trades": 88,
+          "win_rate": 0.4886,
+          "pnl": 1421.88,
+          "return_pct": 2.844
+        },
+        "2026-09": {
+          "trades": 21,
+          "win_rate": 0.5714,
+          "pnl": 175.0,
+          "return_pct": 0.35
+        }
+      },
+      "consistency_score": 0.8276,
+      "profitable_months": 5,
+      "total_months": 5,
+      "note": null,
+      "hard_sl_pct": 9.0,
+      "time_stop_minutes": 5,
+      "risk_per_trade_pct": 1,
+      "min_confidence": 0.95
+    },
+    "BANKNIFTY": {
+      "trade_count": 362,
+      "win_rate": 0.4282,
+      "return_pct": 46.963,
+      "max_drawdown_pct": 42.288,
+      "avg_win_pct": 17.757,
+      "avg_loss_pct": 11.619,
+      "final_capital": 73481.41,
+      "monthwise": {
+        "2026-05": {
+          "trades": 19,
+          "win_rate": 0.2632,
+          "pnl": -2969.92,
+          "return_pct": -5.94
+        },
+        "2026-06": {
+          "trades": 96,
+          "win_rate": 0.3854,
+          "pnl": 5503.05,
+          "return_pct": 11.006
+        },
+        "2026-07": {
+          "trades": 102,
+          "win_rate": 0.5,
+          "pnl": 39566.36,
+          "return_pct": 79.133
+        },
+        "2026-08": {
+          "trades": 125,
+          "win_rate": 0.44,
+          "pnl": -6139.87,
+          "return_pct": -12.28
+        },
+        "2026-09": {
+          "trades": 20,
+          "win_rate": 0.35,
+          "pnl": -12478.2,
+          "return_pct": -24.956
+        }
+      },
+      "consistency_score": 0.0,
+      "profitable_months": 2,
+      "total_months": 5,
+      "note": null,
+      "hard_sl_pct": 5.0,
+      "time_stop_minutes": 5,
+      "risk_per_trade_pct": 1,
+      "min_confidence": 0.95
+    },
+    "FINNIFTY": {
+      "trade_count": 295,
+      "win_rate": 0.5119,
+      "return_pct": 34.346,
+      "max_drawdown_pct": 13.3,
+      "avg_win_pct": 10.38,
+      "avg_loss_pct": 9.0,
+      "final_capital": 67173.1,
+      "monthwise": {
+        "2026-05": {
+          "trades": 13,
+          "win_rate": 0.3846,
+          "pnl": -687.4,
+          "return_pct": -1.375
+        },
+        "2026-06": {
+          "trades": 76,
+          "win_rate": 0.6053,
+          "pnl": 11587.1,
+          "return_pct": 23.174
+        },
+        "2026-07": {
+          "trades": 86,
+          "win_rate": 0.5116,
+          "pnl": 2475.9,
+          "return_pct": 4.952
+        },
+        "2026-08": {
+          "trades": 99,
+          "win_rate": 0.4444,
+          "pnl": 3604.3,
+          "return_pct": 7.209
+        },
+        "2026-09": {
+          "trades": 21,
+          "win_rate": 0.5714,
+          "pnl": 193.2,
+          "return_pct": 0.386
+        }
+      },
+      "consistency_score": 0.2127,
+      "profitable_months": 4,
+      "total_months": 5,
+      "note": null,
+      "hard_sl_pct": 7.5,
+      "time_stop_minutes": 5,
+      "risk_per_trade_pct": 1,
+      "min_confidence": 0.95
+    }
+  },
+  "combined_summary_B": {
+    "total_initial_capital": 150000.0,
+    "total_final_capital": 394476.32,
+    "combined_return_pct": 162.984,
+    "avg_win_rate": 0.4601,
+    "per_index": {
+      "NIFTY50": {
+        "return_pct": -0.262,
+        "trades": 933,
+        "win_rate": 0.4973
+      },
+      "BANKNIFTY": {
+        "return_pct": 447.057,
+        "trades": 1100,
+        "win_rate": 0.4073
+      },
+      "FINNIFTY": {
+        "return_pct": 42.157,
+        "trades": 927,
+        "win_rate": 0.4757
+      }
+    }
+  },
+  "combined_simulation_A_per_index_detail": {
+    "NIFTY50": {
+      "trade_count": 933,
+      "win_rate": 0.4973,
+      "return_pct": -0.262,
+      "max_drawdown_pct": 37.036,
+      "avg_win_pct": 9.999,
+      "avg_loss_pct": 9.68,
+      "final_capital": 49869.19,
+      "monthwise": {
+        "2025-09": {
+          "trades": 62,
+          "win_rate": 0.5645,
+          "pnl": 3529.31,
+          "return_pct": 7.059
+        },
+        "2025-10": {
+          "trades": 85,
+          "win_rate": 0.4,
+          "pnl": -6596.62,
+          "return_pct": -13.193
+        },
+        "2025-11": {
+          "trades": 71,
+          "win_rate": 0.507,
+          "pnl": 3404.62,
+          "return_pct": 6.809
+        },
+        "2025-12": {
+          "trades": 70,
+          "win_rate": 0.4143,
+          "pnl": -977.81,
+          "return_pct": -1.956
+        },
+        "2026-01": {
+          "trades": 74,
+          "win_rate": 0.4595,
+          "pnl": -535.94,
+          "return_pct": -1.072
+        },
+        "2026-02": {
+          "trades": 72,
+          "win_rate": 0.4722,
+          "pnl": -6181.87,
+          "return_pct": -12.364
+        },
+        "2026-03": {
+          "trades": 72,
+          "win_rate": 0.4722,
+          "pnl": -5064.06,
+          "return_pct": -10.128
+        },
+        "2026-04": {
+          "trades": 74,
+          "win_rate": 0.527,
+          "pnl": 1284.06,
+          "return_pct": 2.568
+        },
+        "2026-05": {
+          "trades": 71,
+          "win_rate": 0.5493,
+          "pnl": 4532.94,
+          "return_pct": 9.066
+        },
+        "2026-06": {
+          "trades": 86,
+          "win_rate": 0.5233,
+          "pnl": 2123.62,
+          "return_pct": 4.247
+        },
+        "2026-07": {
+          "trades": 87,
+          "win_rate": 0.5747,
+          "pnl": 2808.75,
+          "return_pct": 5.618
+        },
+        "2026-08": {
+          "trades": 88,
+          "win_rate": 0.4886,
+          "pnl": 1410.94,
+          "return_pct": 2.822
+        },
+        "2026-09": {
+          "trades": 21,
+          "win_rate": 0.5714,
+          "pnl": 131.25,
+          "return_pct": 0.262
+        }
+      },
+      "consistency_score": 0.0,
+      "profitable_months": 8,
+      "total_months": 13,
+      "note": null
+    },
+    "BANKNIFTY": {
+      "trade_count": 1100,
+      "win_rate": 0.4073,
+      "return_pct": 447.057,
+      "max_drawdown_pct": 75.726,
+      "avg_win_pct": 21.544,
+      "avg_loss_pct": 12.286,
+      "final_capital": 273528.73,
+      "monthwise": {
+        "2025-09": {
+          "trades": 78,
+          "win_rate": 0.5,
+          "pnl": 19974.94,
+          "return_pct": 39.95
+        },
+        "2025-10": {
+          "trades": 76,
+          "win_rate": 0.3421,
+          "pnl": -636.56,
+          "return_pct": -1.273
+        },
+        "2025-11": {
+          "trades": 85,
+          "win_rate": 0.4,
+          "pnl": -8522.85,
+          "return_pct": -17.046
+        },
+        "2025-12": {
+          "trades": 106,
+          "win_rate": 0.4245,
+          "pnl": 43046.33,
+          "return_pct": 86.093
+        },
+        "2026-01": {
+          "trades": 82,
+          "win_rate": 0.3171,
+          "pnl": 1881.34,
+          "return_pct": 3.763
+        },
+        "2026-02": {
+          "trades": 95,
+          "win_rate": 0.4842,
+          "pnl": 74953.2,
+          "return_pct": 149.906
+        },
+        "2026-03": {
+          "trades": 89,
+          "win_rate": 0.3258,
+          "pnl": 224244.83,
+          "return_pct": 448.49
+        },
+        "2026-04": {
+          "trades": 67,
+          "win_rate": 0.3433,
+          "pnl": -178547.25,
+          "return_pct": -357.095
+        },
+        "2026-05": {
+          "trades": 79,
+          "win_rate": 0.3797,
+          "pnl": -51034.46,
+          "return_pct": -102.069
+        },
+        "2026-06": {
+          "trades": 96,
+          "win_rate": 0.3854,
+          "pnl": 21039.11,
+          "return_pct": 42.078
+        },
+        "2026-07": {
+          "trades": 102,
+          "win_rate": 0.5,
+          "pnl": 148766.63,
+          "return_pct": 297.533
+        },
+        "2026-08": {
+          "trades": 125,
+          "win_rate": 0.44,
+          "pnl": -23583.0,
+          "return_pct": -47.166
+        },
+        "2026-09": {
+          "trades": 20,
+          "win_rate": 0.35,
+          "pnl": -48053.51,
+          "return_pct": -96.107
+        }
+      },
+      "consistency_score": 0.0,
+      "profitable_months": 7,
+      "total_months": 13,
+      "note": null
+    },
+    "FINNIFTY": {
+      "trade_count": 927,
+      "win_rate": 0.4757,
+      "return_pct": 42.157,
+      "max_drawdown_pct": 40.702,
+      "avg_win_pct": 11.937,
+      "avg_loss_pct": 9.541,
+      "final_capital": 71078.4,
+      "monthwise": {
+        "2025-09": {
+          "trades": 61,
+          "win_rate": 0.4426,
+          "pnl": 1019.2,
+          "return_pct": 2.038
+        },
+        "2025-10": {
+          "trades": 70,
+          "win_rate": 0.4429,
+          "pnl": -4127.2,
+          "return_pct": -8.254
+        },
+        "2025-11": {
+          "trades": 70,
+          "win_rate": 0.3857,
+          "pnl": -8653.4,
+          "return_pct": -17.307
+        },
+        "2025-12": {
+          "trades": 85,
+          "win_rate": 0.4,
+          "pnl": -4972.8,
+          "return_pct": -9.946
+        },
+        "2026-01": {
+          "trades": 68,
+          "win_rate": 0.4706,
+          "pnl": 2001.3,
+          "return_pct": 4.003
+        },
+        "2026-02": {
+          "trades": 99,
+          "win_rate": 0.6061,
+          "pnl": 10104.5,
+          "return_pct": 20.209
+        },
+        "2026-03": {
+          "trades": 74,
+          "win_rate": 0.473,
+          "pnl": 11900.7,
+          "return_pct": 23.801
+        },
+        "2026-04": {
+          "trades": 61,
+          "win_rate": 0.3443,
+          "pnl": -5192.6,
+          "return_pct": -10.385
+        },
+        "2026-05": {
+          "trades": 57,
+          "win_rate": 0.4912,
+          "pnl": 4928.0,
+          "return_pct": 9.856
+        },
+        "2026-06": {
+          "trades": 76,
+          "win_rate": 0.6053,
+          "pnl": 12093.2,
+          "return_pct": 24.186
+        },
+        "2026-07": {
+          "trades": 86,
+          "win_rate": 0.5116,
+          "pnl": 1225.0,
+          "return_pct": 2.45
+        },
+        "2026-08": {
+          "trades": 99,
+          "win_rate": 0.4444,
+          "pnl": 781.2,
+          "return_pct": 1.562
+        },
+        "2026-09": {
+          "trades": 21,
+          "win_rate": 0.5714,
+          "pnl": -28.7,
+          "return_pct": -0.057
+        }
+      },
+      "consistency_score": 0.0,
+      "profitable_months": 8,
+      "total_months": 13,
+      "note": null
+    }
+  }
+}

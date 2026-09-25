@@ -1,0 +1,16 @@
+{
+  "label": "WITH VWAP filter",
+  "trades": 206,
+  "win_rate": 35.4,
+  "total_gross": 1135121.25,
+  "total_charges": 58043.11,
+  "total_net": 1077078.14,
+  "final_capital": 1127078.14,
+  "gross_return_pct": 2270.2,
+  "net_return_pct": 2154.2,
+  "exit_reasons": {
+    "hard_sl_hit": 128,
+    "tsl_hit": 76,
+    "session_end_exit": 2
+  }
+}

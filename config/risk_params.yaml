@@ -1,0 +1,36 @@
+# All numbers here are STARTING HYPOTHESES per PRD §4.8.6 — must be
+# swept + walk-forward validated in backtest before being trusted live.
+# Per-model / per-index overrides live in model_versions.params_json (DB), not here.
+
+initial_stop_loss:
+  premium_drop_pct: 27          # mirrors profit target, back-solve per model
+  time_stop_minutes: 18         # theta-decay stop; shorter near expiry
+
+trailing_stop:
+  activation_profit_pct: 15
+  base_trail_pct: 12
+  tightening_coefficient_k: 0.15
+  floor_pct: 5
+  vol_scaling: true             # widen in high-IV, tighten in low-IV regimes
+
+profit_booking:
+  partial_book_enabled: true
+  partial_book_trigger_pct: 27
+  partial_book_fraction: 0.5
+  expiry_force_exit_minutes: 20
+
+circuit_breakers:
+  daily_loss_limit_pct: 5.0          # of day's allocated capital
+  consecutive_loss_throttle: 3       # trades before halving size
+  consecutive_loss_size_multiplier: 0.5
+  max_concurrent_positions: 3
+  weekly_drawdown_cap_pct: 15.0      # auto-downgrade to paper-only
+
+position_sizing:
+  method: fractional_kelly
+  kelly_fraction: 0.25               # quarter-Kelly
+  vol_scaling: true
+
+confluence_gate:
+  min_quant_confidence: 0.62         # calibrated in backtest, not guessed
+  chart_confirmation_candles: 2

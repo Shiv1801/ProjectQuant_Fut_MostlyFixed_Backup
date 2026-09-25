@@ -1,0 +1,36 @@
+{
+  "with_vwap": {
+    "label": "WITH VWAP filter",
+    "trades": 260,
+    "win_rate": 37.7,
+    "total_gross": 1887283.25,
+    "total_charges": 61647.48,
+    "total_net": 1825635.77,
+    "final_capital": 1875635.77,
+    "gross_return_pct": 3774.6,
+    "net_return_pct": 3651.3,
+    "exit_reasons": {
+      "tsl_hit": 109,
+      "hard_sl_hit": 148,
+      "session_end_exit": 2,
+      "time_stop": 1
+    }
+  },
+  "without_vwap": {
+    "label": "WITHOUT VWAP filter (gate alone)",
+    "trades": 1287,
+    "win_rate": 27.1,
+    "total_gross": 29412.25,
+    "total_charges": 79455.32,
+    "total_net": -50043.07,
+    "final_capital": -43.07,
+    "gross_return_pct": 58.8,
+    "net_return_pct": -100.1,
+    "exit_reasons": {
+      "hard_sl_hit": 793,
+      "tsl_hit": 462,
+      "session_end_exit": 5,
+      "time_stop": 27
+    }
+  }
+}

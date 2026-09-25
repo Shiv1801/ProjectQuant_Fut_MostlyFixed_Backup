@@ -1,0 +1,22 @@
+======================================================================
+VWAP ALIGNMENT TEST
+(low-premium trades under Rs10.0 excluded upfront: 153 trades removed)
+======================================================================
+
+WITH VWAP signal:
+  Trades: 340
+  Win rate: 45.6%
+  Total P&L: 189,784.75
+  Avg P&L per trade: 558.19
+
+AGAINST VWAP signal:
+  Trades: 645
+  Win rate: 39.1%
+  Total P&L: 104,058.25
+  Avg P&L per trade: 161.33
+
+----------------------------------------------------------------------
+VERDICT:
+  WITH-signal trades meaningfully outperform (win rate +6.5pp, avg P&L 558 vs 161).
+
+  SUPPORTS adding a VWAP filter

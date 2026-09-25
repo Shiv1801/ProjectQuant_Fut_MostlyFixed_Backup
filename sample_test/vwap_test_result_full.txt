@@ -1,0 +1,22 @@
+======================================================================
+VWAP ALIGNMENT TEST
+(NO EXCLUSIONS -- full trade set including low-premium outliers)
+======================================================================
+
+WITH VWAP signal:
+  Trades: 359
+  Win rate: 45.7%
+  Total P&L: 430,931.25
+  Avg P&L per trade: 1,200.37
+
+AGAINST VWAP signal:
+  Trades: 671
+  Win rate: 38.9%
+  Total P&L: 260,988.00
+  Avg P&L per trade: 388.95
+
+----------------------------------------------------------------------
+VERDICT:
+  WITH-signal trades meaningfully outperform (win rate +6.8pp, avg P&L 1200 vs 389).
+
+  SUPPORTS adding a VWAP filter

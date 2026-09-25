@@ -1,0 +1,19 @@
+# PRD §2 cost model — must be baked into every backtest, not bolted on after.
+# STT/brokerage figures change; verify at build time against Fyers + exchange circulars.
+brokerage:
+  type: flat_per_lot
+  amount_inr: 20
+
+stt:
+  sell_side_premium_pct: 0.0625   # verify current rate before go-live
+
+exchange_txn_charges_pct: 0.05
+sebi_fees_pct: 0.0001
+stamp_duty_pct: 0.003
+gst_on_brokerage_pct: 18
+
+slippage_model:
+  type: depth_derived_liquidity_score
+  market_order_bps_base: 8
+  limit_order_bps_base: 2
+  liquidity_score_scaling: true
