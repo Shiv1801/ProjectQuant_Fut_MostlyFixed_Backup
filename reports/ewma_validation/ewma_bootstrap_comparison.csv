@@ -1,0 +1,2 @@
+﻿comparison,bootstrap_reps,holdout_dates,mean_mae_improvement,ci_2_5_pct,median,ci_97_5_pct,fraction_bootstraps_positive,interpretation
+ewma_lam_0.94_init_14 vs baseline_current_lam_0.94_init_1,3000,145,0.04561006102504546,0.027913350454459435,0.04535679302058779,0.06339454471860552,1.0,positive improvement favors candidate; CI crossing zero means uncertain

@@ -1,4 +1,43 @@
+import socket
+
 from engine.data_layer.fyers_client.auth import get_fyers_model
+
+# GLOBAL SOCKET TIMEOUT (added 2026-10-01): FIXES A REAL, CONFIRMED ROOT
+# CAUSE, not a symptom. The fyers_apiv3 SDK's FyersModel (built on plain
+# `requests`) is constructed with NO timeout anywhere in this codebase --
+# confirmed by reading engine/data_layer/fyers_client/auth.py's
+# get_fyers_model(), which passes no timeout-related argument at all,
+# unlike the one place in that same file that calls `requests` directly
+# (exchange_auth_code_for_token, which DOES pass timeout=15).
+#
+# Wrapping these calls in asyncio.to_thread() + asyncio.wait_for()
+# (engine/background/pollers.py, added earlier the same day) does NOT fix
+# this: wait_for can only stop *waiting* for a thread's result -- it
+# cannot interrupt a raw, already-blocking socket.recv() happening inside
+# that thread. A connection that stalls at the TCP level (observed live,
+# consistent with this project's own prior notes about a corporate VPN
+# with occasional very slow/stuck round-trips) leaves that worker thread
+# blocked forever with no exception ever raised, which is exactly the
+# symptom reported and confirmed live: price_poller showing
+# running=true, last_success=null, last_error=null, consecutive_errors=0
+# indefinitely -- not one failed cycle, not one log line, because the
+# call never returned control to Python at all.
+#
+# socket.setdefaulttimeout() is the correct fix for this specific failure
+# mode: it sets a hard ceiling on every socket operation for any code in
+# this process that doesn't explicitly override it on its own socket
+# (which the Fyers SDK does not), including library internals this
+# codebase cannot edit directly. Set once, at import time of this module
+# -- every poller and signal endpoint imports from here before making its
+# first Fyers call, so this always runs before any socket opens.
+# 20s is intentionally longer than the 10-15s asyncio.wait_for ceilings
+# already in pollers.py -- this is the last-resort backstop; the
+# wait_for layer should normally fire first on anything merely slow, and
+# this layer exists specifically to guarantee the underlying socket
+# itself cannot hang forever even if wait_for's own cancellation can't
+# reach it.
+socket.setdefaulttimeout(20.0)
+
 
 def get_quotes_multi(access_token, symbols):
     fyers = get_fyers_model(access_token)

@@ -1,0 +1,17 @@
+﻿check,value,status
+database_path,C:\Users\Shivam.Joshi\OneDrive - Magnit\Documents\my\trade\Project\project-trade\project-trade\data\project_trade.db,PASS
+raw_historical_rows,181878,INFO
+valid_historical_ohlc_rows,181878,PASS
+invalid_historical_ohlc_rows_excluded,0,INFO
+contiguous_same_day_runs,587,INFO
+total_cases,4773,PASS
+development_cases,3341,INFO
+holdout_cases,1432,INFO
+calibration_fit,actual = 2.2503483213 + 0.6783999087 * raw_candidate; fit on development only,INFO
+scale_calibration_fit,actual = 0.9013769463 * raw_candidate; fit on development only,INFO
+p90_target_threshold,12.198446221726845,INFO
+p95_target_threshold,14.41844621005096,INFO
+p99_target_threshold,21.384607508504033,INFO
+database_access,SQLite mode=ro,PASS
+live_model_database_settings_changed,No,PASS
+selection_note,No holdout-based model selection; calibration parameters fitted on development only,PASS

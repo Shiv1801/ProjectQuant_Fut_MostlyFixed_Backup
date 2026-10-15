@@ -9,6 +9,8 @@ browser open, as long as uvicorn is running.
 """
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import asyncio
 from loguru import logger
@@ -24,13 +26,16 @@ from config.db import (
     get_open_positions, get_trade_log, get_trade_log_stats, get_trade_log_detailed_stats, clear_trade_history,
     insert_backtest_run, get_backtest_runs, mark_backtest_run_applied,
     get_trade_action_log, get_rejection_log, get_position,
+    insert_model_score, get_model_scores_for_training, get_model_scores_count,
+    get_option_chain_history_count,
 )
+from engine.signal_layer.ml_ensemble.group_g import compute_group_g_score, MIN_TRADES_FOR_GROUP_G
 from engine.execution.trade_dispatcher import execute_exit, execute_entry, is_live_trading_active_for
 from engine.data_layer.fyers_client.auth import get_fyers_model, generate_auth_url, exchange_auth_code_for_token
 from engine.data_layer.fyers_client.rest_client import get_historical_candles
 from engine.data_layer.historical_backfill import backfill_index, backfill_index_extended
 from engine.shared_state.store import shared_state
-from engine.background.pollers import start_background_pollers, start_position_monitor, start_auto_entry_loop, SYMBOLS, CHAIN_INDICES
+from engine.background.pollers import start_background_pollers, start_position_monitor, start_auto_entry_loop, start_candle_volume_enrichment, start_option_chain_history_loop, SYMBOLS, CHAIN_INDICES
 
 from engine.signal_layer.volatility.realized_vol import compute_realized_vol
 from engine.signal_layer.volatility.garch import compute_garch_forecast
@@ -40,6 +45,7 @@ from engine.signal_layer.momentum.hurst import compute_hurst_exponent
 from engine.signal_layer.momentum.zscore import compute_zscore
 from engine.signal_layer.momentum.variance_ratio import compute_variance_ratio
 from engine.signal_layer.momentum.ofi import compute_ofi
+from engine.signal_layer.momentum.ofi import calculate_futures_ofi
 from engine.signal_layer.market_structure.gex import compute_gex
 from engine.signal_layer.market_structure.pcr import compute_pcr
 from engine.signal_layer.market_structure.max_pain import compute_max_pain
@@ -63,9 +69,35 @@ from config.trading_config import (
     reset_index_config, reset_all_index_configs, get_account_config, update_account_config, INDICES,
 )
 from engine.backtest.engine import run_backtest
+from engine.backtest.engine_bs import run_backtest_bs
 
 app = FastAPI(title="Project Trade API", version="0.3.0")
 _SERVER_START_TIME = datetime.utcnow().isoformat()  # lets /health prove a fresh restart actually happened
+
+# Serves the frontend from the SAME origin as the API (2026-09-25 fix).
+# Previously the person opened frontend/index.html directly via a
+# file:// URL, which is a DIFFERENT origin than http://127.0.0.1:8001 --
+# confirmed via a real, reported browser console error ("Unsafe attempt
+# to load URL file://... 'file:' URLs are treated as unique security
+# origins"). Under file://, WebSocket connections (ws://127.0.0.1:8001/
+# ws/prices) and some fetch() behavior can be blocked or degraded
+# inconsistently across browsers -- a very plausible cause of reported
+# "extremely slow" UI updates that this session's own server-side
+# timing tests (all sub-10ms) could not otherwise explain, since a
+# blocked client-side connection never reaches the server logs at all.
+# Mounting the real frontend folder here makes http://127.0.0.1:8001/
+# serve the app directly, same-origin -- open that URL instead of the
+# file:// path from now on.
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+
+@app.get("/")
+def serve_frontend_index():
+    return FileResponse(_FRONTEND_DIR / "index.html")
+
+
+if _FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_FRONTEND_DIR)), name="static")
 
 
 @app.websocket("/ws/prices")
@@ -118,6 +150,22 @@ def on_startup():
     start_background_pollers()
     start_position_monitor()
     start_auto_entry_loop()
+    # FIXED 2026-10-06, found during VWAP verification: this function
+    # already existed in pollers.py (minute-boundary volume enrichment,
+    # see its own docstring) but was never actually started here -- it
+    # was dead code, so candles.volume was never being populated live
+    # even though every downstream piece (_compute_intraday_vwap, the
+    # confluence gate's require_vwap handling, model_scores logging)
+    # was already correctly wired to use it. No new loop design, no new
+    # Fyers endpoint -- this just starts the loop that was already written.
+    start_candle_volume_enrichment()
+    # Added 2026-10-12, per explicit request: starts accumulating REAL
+    # historical option-chain data (bid/ask/OI/volume/Greeks) going
+    # forward, ahead of any strike-selector scoring upgrade -- see
+    # option_chain_history_loop's own docstring in pollers.py. Reads only
+    # already-polled shared_state data; makes no new Fyers calls and does
+    # not affect any live trading path.
+    start_option_chain_history_loop()
 
 
 @app.get("/health")
@@ -515,6 +563,74 @@ async def variance_ratio_signal(index_id: str, window: int = 150, q: int = 5):
             **result, "computed_at": datetime.utcnow().isoformat()}
 
 
+@app.get("/signals/ofi/NIFTY50/futures")
+async def nifty_futures_ofi_signal():
+    """Diagnostic-only OFI for the nearest two NIFTY monthly futures.
+
+    This endpoint reads shared state only. It makes no FYERS calls and
+    is not connected to the confluence or order-execution pipeline.
+    """
+    from engine.shared_state.store import now_ist_iso
+
+    contract_metadata = list(shared_state.futures_contracts)
+    contract_inputs = []
+
+    for contract in contract_metadata:
+        symbol = contract.get("symbol")
+        snapshot = shared_state.get_futures_depth(symbol) if symbol else None
+
+        if not snapshot:
+            contract_inputs.append({
+                "symbol": symbol,
+                "expiry": contract.get("expiry_utc"),
+                "updated_at": None,
+                "total_buy_qty": None,
+                "total_sell_qty": None,
+                "error": shared_state.futures_depth_errors.get(symbol),
+            })
+            continue
+
+        raw = snapshot.get("raw") or {}
+        book = (raw.get("d") or {}).get(symbol, {})
+
+        contract_inputs.append({
+            "symbol": symbol,
+            "expiry": snapshot.get("expiry_utc") or contract.get("expiry_utc"),
+            "updated_at": snapshot.get("updated_at"),
+            "total_buy_qty": book.get("totalbuyqty"),
+            "total_sell_qty": book.get("totalsellqty"),
+            "error": shared_state.futures_depth_errors.get(symbol),
+        })
+
+    result = calculate_futures_ofi(contract_inputs, max_age_seconds=15.0)
+
+    # Attach the most recent known per-contract error for troubleshooting.
+    for row in result["contracts"]:
+        row["last_error"] = shared_state.futures_depth_errors.get(row.get("symbol"))
+
+    poller_status = dict(shared_state.poller_status.get("futures_depth", {}))
+
+    if result["status"] == "valid":
+        overall_status = "ok"
+    elif result["status"] == "partial":
+        overall_status = "partial"
+    else:
+        overall_status = "unavailable"
+
+    return {
+        **result,
+        "status": overall_status,
+        "index_id": "NIFTY50",
+        "model_id": "nifty_monthly_futures_order_flow_imbalance",
+        "computed_at": now_ist_iso(),
+        "contracts_discovered": len(contract_metadata),
+        "contracts_updated_at": shared_state.futures_contracts_updated_at,
+        "poller": poller_status,
+        "diagnostic_only": True,
+        "trading_integration": False,
+    }
+
+
 @app.get("/signals/ofi/{index_id}")
 async def ofi_signal(index_id: str):
     index_id = index_id.upper()
@@ -636,6 +752,37 @@ async def kelly_sizing_signal():
             **result, "computed_at": datetime.utcnow().isoformat()}
 
 
+@app.get("/signals/group-g-status")
+async def group_g_status_signal(index_id: str | None = None):
+    """
+    Group G: GBT classifier status — mirrors kelly_sizing_signal()'s
+    pattern exactly (added 2026-09-30, per explicit request: "set a
+    minimum threshold of x trades data required to activate the model
+    like you did for kelly model"). Dashboard-facing: shows whether
+    Group G is currently active or how many more closed, linked trades
+    are needed before it activates, without requiring a live feature
+    snapshot (unlike the per-evaluation vote inside confluence_signal,
+    this just reports STATUS, using an empty feature vector -- score is
+    meaningless here and intentionally omitted from the response, only
+    active/trade_count/threshold/model metadata are).
+    """
+    linked_count = get_model_scores_count(index_id=index_id, only_linked=True)
+    total_count = get_model_scores_count(index_id=index_id, only_linked=False)
+    result = compute_group_g_score(feature_vector={}, live_trade_count=linked_count)
+    return {
+        "status": "ok", "model_id": "gbt_ensemble_classifier", "group": "G",
+        "active": result["active"],
+        "closed_linked_trade_count": linked_count,
+        "total_logged_evaluations": total_count,
+        "min_trades_threshold": MIN_TRADES_FOR_GROUP_G,
+        "model_val_accuracy": result.get("model_val_accuracy"),
+        "model_beats_baseline": result.get("model_beats_baseline"),
+        "model_trained_at": result.get("model_trained_at"),
+        "note": result.get("note"),
+        "computed_at": datetime.utcnow().isoformat(),
+    }
+
+
 @app.get("/signals/vol-scaled-sizing/{index_id}")
 async def vol_scaled_sizing_signal(index_id: str, base_size: float = 100000, window: int = 30):
     index_id = index_id.upper()
@@ -655,8 +802,48 @@ async def vol_scaled_sizing_signal(index_id: str, base_size: float = 100000, win
 
 # ---------------- Confluence Gate ----------------
 
+def _flatten_model_outputs_for_logging(model_outputs: dict, quant_result: dict) -> dict:
+    """
+    Group G training-data flattener (added 2026-09-30). model_outputs
+    here (confluence_signal's local dict) holds PLAIN DICTS returned by
+    each compute_*() function (compute_hurst_exponent, compute_zscore,
+    etc.), not engine.signal_layer.base_model.ModelOutput instances --
+    engine/ml_pipeline/feature_store/builder.py's build_feature_vector()
+    was written for the ModelOutput shape and would crash if called
+    directly on this dict (attribute access on what's actually a plain
+    dict, and "spot" is a bare float, not even a dict). This is a
+    separate, purpose-built flattener for the actual shape confluence_signal
+    produces, rather than misusing a function built for different data.
+
+    Every scalar (int/float/bool/str/None) field from every model's
+    result dict is kept, prefixed by that model's key, so a later
+    training script can build a consistent feature matrix without
+    needing to know this endpoint's internals. Non-scalar values (lists,
+    nested dicts) are skipped here — this is meant for the ML feature
+    matrix, not full data recovery; the full evaluate_confluence()
+    inputs are already separately visible in the gate_result this
+    endpoint returns.
+    """
+    flat = {}
+    for source_key, value in model_outputs.items():
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if isinstance(v, (int, float, bool)) or v is None:
+                    flat[f"{source_key}_{k}"] = v
+        elif isinstance(value, (int, float, bool)) or value is None:
+            flat[source_key] = value
+    # quant_result (compute_quant_confidence's output) carries the combined
+    # confidence/direction score itself, not covered by model_outputs above
+    # (it's derived FROM model_outputs, computed one step later) -- included
+    # explicitly so the final combined signal is part of the training row too.
+    for k, v in (quant_result or {}).items():
+        if isinstance(v, (int, float, bool)) or v is None:
+            flat[f"quant_{k}"] = v
+    return flat
+
+
 @app.get("/signals/confluence/{index_id}")
-async def confluence_signal(index_id: str, min_confidence: float = 0.5):
+async def confluence_signal(index_id: str, min_confidence: float | None = None):
     """
     PRD §4.3.5 — the dual-leg AND gate, now with an optional Leg 3
     (VWAP), per-index (defaults ON for NIFTY50 per explicit request —
@@ -684,10 +871,43 @@ async def confluence_signal(index_id: str, min_confidence: float = 0.5):
 
     parsed_chain = _parse_chain_from_shared_state(index_id) if index_id in CHAIN_INDICES else None
     pcr_result = {"pcr": None}
+    max_pain_result = {"max_pain_strike": None}
+    oi_change_result = {"top_oi_builds": []}
+    spot = None
     if parsed_chain:
         pcr_result = compute_pcr(parsed_chain["call_oi_total"], parsed_chain["put_oi_total"])
+        # Added 2026-09-25: these two were already computed elsewhere
+        # (the standalone /signals/max-pain and /signals/oi-change
+        # endpoints) but never fed into the quant confidence score --
+        # wiring them in here so they can actually vote (see
+        # engine/confluence_gate/quant_score.py's new
+        # _vote_from_max_pain / _vote_from_oi_change).
+        max_pain_result = compute_max_pain(parsed_chain["strikes"])
+        oi_change_result = compute_oi_change_analysis(parsed_chain["strikes"], top_n=5)
+        spot = parsed_chain["spot"]
 
-    model_outputs = {"hurst": hurst_result, "zscore": zscore_result, "ofi": ofi_result, "pcr": pcr_result}
+    # Group G (added 2026-09-30): computed from the SAME A-F outputs
+    # already gathered above (flattened the identical way training data
+    # was, via _flatten_model_outputs_for_logging further down), so the
+    # feature vector the model sees at inference time matches its
+    # training-time shape exactly. Threshold-gated internally --
+    # returns active=False (contributes nothing) until enough real
+    # closed trades exist and a model has actually been trained; this
+    # call is cheap even while inactive (one DB count query, no model
+    # load) so it's safe to run on every evaluation, not just when active.
+    linked_trade_count = get_model_scores_count(only_linked=True)
+    pre_group_g_features = _flatten_model_outputs_for_logging(
+        {"hurst": hurst_result, "zscore": zscore_result, "ofi": ofi_result, "pcr": pcr_result,
+         "max_pain": max_pain_result, "oi_change": oi_change_result, "spot": spot},
+        quant_result=None,
+    )
+    group_g_result = compute_group_g_score(pre_group_g_features, linked_trade_count)
+
+    model_outputs = {
+        "hurst": hurst_result, "zscore": zscore_result, "ofi": ofi_result, "pcr": pcr_result,
+        "max_pain": max_pain_result, "oi_change": oi_change_result, "spot": spot,
+        "group_g": group_g_result,
+    }
     quant_result = compute_quant_confidence(model_outputs)
 
     chart_result = {"verdict": "no_quant_direction", "confirmed": False}
@@ -696,6 +916,31 @@ async def confluence_signal(index_id: str, min_confidence: float = 0.5):
 
     index_config = get_index_config(index_id)
     require_vwap = index_config["risk_params"].get("require_vwap", False) if index_config else False
+    require_chart = index_config["risk_params"].get("require_chart_confirmation", True) if index_config else True
+
+    # FIXED A REAL, CONFIRMED BUG (2026-09-25): this endpoint's
+    # min_confidence parameter defaulted to a hardcoded 0.5 and was
+    # NEVER read from the saved min_confluence_confidence setting --
+    # unlike require_vwap/require_chart_confirmation just above, which
+    # correctly read live from index_config. Calling this endpoint
+    # directly with no query string (exactly what a person testing it
+    # by hand would naturally do) silently used 0.5 regardless of a
+    # saved value like 0.9, and a live confluence_confidence=0.505
+    # result incorrectly showed fired=True because it cleared that
+    # hidden 0.5 default, not the real, intended 0.9 threshold.
+    # IMPORTANT: this bug did NOT affect real auto-entry trading --
+    # auto_entry_loop (pollers.py) -> position_size_signal ->
+    # strike_selector_signal -> confluence_signal already correctly
+    # propagates the real min_confluence_confidence value the whole
+    # way down (confirmed by tracing every call in that chain), so no
+    # live/paper trade was ever sized or placed using the wrong
+    # threshold. This fix only corrects DIRECT calls to this endpoint
+    # with no explicit min_confidence override, e.g. manual testing.
+    # None (the new default, replacing the old hardcoded 0.5) means
+    # "caller didn't override" -- use the real saved threshold. An
+    # explicit value, including exactly 0.5, is respected as given.
+    if min_confidence is None:
+        min_confidence = index_config["risk_params"].get("min_confluence_confidence", 0.5) if index_config else 0.5
 
     vwap_result = None
     if require_vwap:
@@ -703,8 +948,32 @@ async def confluence_signal(index_id: str, min_confidence: float = 0.5):
 
     gate_result = evaluate_confluence(
         quant_result, chart_result, min_confidence_threshold=min_confidence,
-        vwap_result=vwap_result, require_vwap=require_vwap,
+        vwap_result=vwap_result, require_vwap=require_vwap, require_chart=require_chart,
     )
+
+    # Group G training-data logging (added 2026-09-30): records EVERY
+    # real confluence evaluation -- fired AND rejected -- with the full
+    # Group A-F feature vector present at this moment, so a future GBT
+    # classifier has real training data. This is the single real call
+    # site for confluence evaluation (strike_selector_signal ->
+    # position_size_signal -> auto_entry_loop all route through this
+    # function), so logging here covers every live/paper decision made
+    # by the app. Rejected signals (veto_reason set) are genuinely
+    # useful negative examples, not noise -- logged the same as fired
+    # ones. Best-effort: a logging failure must NEVER block or alter
+    # the actual trading decision this endpoint returns.
+    try:
+        feature_vector = _flatten_model_outputs_for_logging(model_outputs, quant_result)
+        insert_model_score(
+            index_id=index_id, fired=gate_result.get("fired", False),
+            direction=gate_result.get("direction"), veto_reason=gate_result.get("veto_reason"),
+            quant_confidence=gate_result.get("quant_confidence"),
+            chart_confirmed=gate_result.get("chart_confirmed"),
+            vwap_confirmed=gate_result.get("vwap_confirmed"),
+            feature_vector=feature_vector,
+        )
+    except Exception as e:
+        logger.warning(f"confluence_signal: model_scores logging failed for {index_id}: {e}")
 
     return {
         "status": "ok", "index_id": index_id, "model_id": "confluence_gate",
@@ -712,43 +981,114 @@ async def confluence_signal(index_id: str, min_confidence: float = 0.5):
     }
 
 
-def _compute_intraday_vwap(index_id: str, candles: list[dict]) -> dict | None:
+def _compute_intraday_vwap(index_id: str, candles: list[dict]) -> dict:
     """
-    Computes today's real, live intraday VWAP from the app's own candle
-    history — resets at the start of each trading day, using genuine
-    cumulative daily volume (captured from Fyers' live quotes, see
-    engine/background/pollers.py's insert_tick volume capture). Returns
-    None if there isn't yet enough same-day volume data (e.g. the very
-    first minute or two of trading) — treated as "no signal yet" by
-    the gate, never a veto.
+    REWRITTEN 2026-10-05 after a live diagnostic (tools/check_fyers_nifty_history_volume.py)
+    against real 2026-10-05 NSE:NIFTY50-INDEX data proved two things:
+
+    1. The OLD formula here (`minute_volume = vol - prev_volume`) was
+       WRONG for this data source. Fyers' history API returns genuine
+       PER-CANDLE volume for this symbol (confirmed: 375 candles, 362
+       with real non-zero values, e.g. 10232400, 6559898, ... -- NOT a
+       monotonically increasing cumulative series), so subtracting
+       consecutive values produced garbage, not incremental volume.
+    2. The underlying root cause of volume always being empty here
+       was NOT "Fyers has no index volume" -- it was that `candles`
+       (config/db.py) never had a real `volume` column at all (see
+       that file's 2026-10-05 migration comment), and the live
+       tick-built candles never had volume populated in the first
+       place (the Quotes API genuinely has none for this symbol,
+       confirmed separately). volume now arrives via a dedicated
+       minute-boundary enrichment loop (engine/background/pollers.py's
+       candle_volume_enrichment_loop) that pulls it from Fyers'
+       HISTORY API, not the quote stream, and writes it into that new
+       column -- this function just reads it, unchanged otherwise.
+
+    Standard session VWAP: TP = (H+L+C)/3, VWAP = sum(TP * volume) / sum(volume).
+    - IST session reset: only today's candles are considered.
+    - Candles with volume None/<=0 are SKIPPED, never treated as 0
+      contribution and never backfilled/estimated -- per explicit
+      requirement, a missing/zero-volume minute is excluded, not
+      fabricated.
+    - Never returns an ambiguous bare None. Always returns a dict with
+      an explicit "available" flag, per explicit requirement.
+
+    REVISED 2026-10-06, per explicit requirement -- VWAP STALENESS, not
+    just availability: live testing showed the current/still-forming
+    1-minute candle routinely reports volume=0 for several seconds
+    before candle_volume_enrichment_loop's next cycle fills it in (e.g.
+    09:40 was 0 then became 850,481 a few seconds later -- the Fyers
+    history API simply hasn't finalized that minute's volume yet, not a
+    data error). The math/formula above is UNCHANGED -- it already
+    skips zero/missing-volume candles, so a still-forming candle is
+    naturally excluded from the sum, never fabricated. What was missing
+    was only a STATUS signal distinguishing "every completed candle
+    with volume is included, and the newest one happens to be one of
+    them" (FRESH) from "the newest candle has no volume yet, so this
+    VWAP reflects the latest fully-enriched candle before it, which is
+    still a perfectly valid VWAP to trade on" (STALE_CURRENT_CANDLE).
+    Added a "status" field for this; "available" keeps meaning exactly
+    what it did before (a valid VWAP number exists) -- STALE_CURRENT_CANDLE
+    is still available=True, so require_vwap enforcement in
+    evaluate_confluence() needs no change: it already treats any
+    available=True result as usable. Only becomes available=False /
+    status="UNAVAILABLE" when there is no positive-volume candle at all
+    today -- unchanged from before.
     """
     if not candles:
-        return None
+        return {"available": False, "vwap": None, "price": None, "side": None, "status": "UNAVAILABLE",
+                "source": "intraday_candles", "volume_candles_count": 0,
+                "vwap_candle": None, "current_candle": None, "reason": "no_candles"}
+
     today = _now_ist().date()
     todays_candles = [c for c in candles if _minute_bucket_to_date(c["minute_bucket"]) == today]
     if len(todays_candles) < 2:
-        return None
+        current_price = todays_candles[-1]["close"] if todays_candles else None
+        current_bucket = todays_candles[-1]["minute_bucket"] if todays_candles else None
+        return {"available": False, "vwap": None, "price": current_price, "side": None, "status": "UNAVAILABLE",
+                "source": "intraday_candles", "volume_candles_count": 0,
+                "vwap_candle": None, "current_candle": current_bucket, "reason": "insufficient_candles_today"}
+
+    current_price = todays_candles[-1]["close"]
+    current_bucket = todays_candles[-1]["minute_bucket"]
 
     cumulative_pv = 0.0
     cumulative_vol = 0.0
-    prev_volume = None
+    volume_candles_count = 0
+    last_included_bucket = None
     for c in todays_candles:
         vol = c.get("volume")
-        if vol is None:
-            continue
-        minute_volume = vol - prev_volume if prev_volume is not None else 0
-        prev_volume = vol
-        if minute_volume < 0:
+        # Explicit requirement: skip zero/invalid/missing volume rather
+        # than manufacturing or substituting a value for it. This is
+        # also exactly what makes a still-forming current candle with
+        # no volume yet simply not contribute -- no special-casing
+        # needed, the existing guard already does it.
+        if vol is None or vol <= 0:
             continue
         typical_price = (c["high"] + c["low"] + c["close"]) / 3
-        cumulative_pv += typical_price * minute_volume
-        cumulative_vol += minute_volume
+        cumulative_pv += typical_price * vol
+        cumulative_vol += vol
+        volume_candles_count += 1
+        last_included_bucket = c["minute_bucket"]
 
     if cumulative_vol <= 0:
-        return None
-    vwap = cumulative_pv / cumulative_vol
-    current_price = todays_candles[-1]["close"]
-    return {"vwap": round(vwap, 2), "price": current_price}
+        return {"available": False, "vwap": None, "price": current_price, "side": None, "status": "UNAVAILABLE",
+                "source": "intraday_candles", "volume_candles_count": 0,
+                "vwap_candle": None, "current_candle": current_bucket, "reason": "volume_unavailable"}
+
+    vwap = round(cumulative_pv / cumulative_vol, 2)
+    side = "above" if current_price > vwap else ("below" if current_price < vwap else "at")
+    # FRESH: the latest candle itself was included (had real volume).
+    # STALE_CURRENT_CANDLE: the latest candle had no volume yet, so this
+    # VWAP is the last valid one computed from the most recent candle
+    # that DID have volume -- still a real, usable VWAP, just not
+    # updated with this exact minute yet.
+    status = "FRESH" if last_included_bucket == current_bucket else "STALE_CURRENT_CANDLE"
+    return {
+        "available": True, "vwap": vwap, "price": current_price, "side": side, "status": status,
+        "source": "intraday_candles", "volume_candles_count": volume_candles_count,
+        "vwap_candle": last_included_bucket, "current_candle": current_bucket, "reason": None,
+    }
 
 
 def _minute_bucket_to_date(minute_bucket: str):
@@ -763,7 +1103,7 @@ def _now_ist():
 # ---------------- Strike Selector ----------------
 
 @app.get("/signals/strike-selector/{index_id}")
-async def strike_selector_signal(index_id: str, direction: str = None, min_confidence: float = 0.5):
+async def strike_selector_signal(index_id: str, direction: str = None, min_confidence: float | None = None):
     """
     PRD §4.4 — picks the best strike to trade for a given direction.
     If `direction` isn't explicitly passed, runs the confluence gate
@@ -773,6 +1113,7 @@ async def strike_selector_signal(index_id: str, direction: str = None, min_confi
     if index_id not in CHAIN_INDICES:
         return {"status": "error", "message": f"'{index_id}' has no option chain to select from."}
 
+    gate_response = None
     if not direction:
         gate_response = await confluence_signal(index_id, min_confidence=min_confidence)
         if not gate_response.get("fired"):
@@ -798,9 +1139,22 @@ async def strike_selector_signal(index_id: str, direction: str = None, min_confi
 
     result = select_best_strike(parsed_chain["strikes"], direction, iv_rank=iv_rank)
 
+    # Carries the gate's confidence scores through to the caller (added
+    # 2026-09-30, alongside Group G) -- these were previously computed in
+    # confluence_signal and then DISCARDED once fired/direction was
+    # extracted, meaning downstream code (position_size_signal, then
+    # auto_entry_loop -> execute_paper_entry) had no way to record what
+    # confidence a trade actually fired at. Only populated when this
+    # function itself ran the gate (gate_response is not None) -- when a
+    # caller passes an explicit `direction` and skips the gate, there's no
+    # real quant_confidence for this call to report, and None here means
+    # exactly that, not a lost value.
+    quant_confidence = gate_response.get("quant_confidence") if gate_response else None
+
     return {
         "status": "ok", "index_id": index_id, "model_id": "strike_selector",
         "direction": direction, "spot": parsed_chain["spot"],
+        "quant_confidence": quant_confidence,
         **result, "computed_at": datetime.utcnow().isoformat(),
     }
 
@@ -810,12 +1164,24 @@ async def strike_selector_signal(index_id: str, direction: str = None, min_confi
 @app.get("/signals/position-size/{index_id}")
 async def position_size_signal(index_id: str, available_capital: float | None = None,
                                 risk_per_trade_pct: float = 2.0, hard_sl_pct: float = 27.0,
-                                min_confidence: float = 0.5):
+                                min_confidence: float | None = None):
     """
     PRD §4.5, §4.8.6 — automatically computes how many lots to trade,
     chaining confluence gate -> strike selector -> position sizing.
     If the gate hasn't fired, returns 0 lots with a clear reason rather
     than a fabricated size.
+
+    min_confidence: FIXED A REAL BUG (2026-09-25) alongside the same
+    fix in confluence_signal/strike_selector_signal -- was previously
+    float = 0.5 here too, which meant ANY caller of this endpoint that
+    didn't explicitly pass min_confidence (e.g. manual testing via the
+    browser or a bare GET request) would silently use 0.5 instead of
+    the real saved min_confluence_confidence, all the way down the
+    chain. None now means "not overridden" and is resolved from saved
+    config at the confluence_signal level. auto_entry_loop (pollers.py)
+    was never affected -- it always passes an explicit real value from
+    risk_params["min_confluence_confidence"], never relying on this
+    default.
 
     available_capital: FIXED A REAL BUG -- this previously defaulted
     to a hardcoded Rs 100,000 and was never actually replaced with the
@@ -844,11 +1210,24 @@ async def position_size_signal(index_id: str, available_capital: float | None = 
 
     kelly_response = await kelly_sizing_signal()
     kelly_scale = None
-    if kelly_response.get("sized_fraction") is not None:
-        # Kelly's sized_fraction is itself already a small %, use it as a
-        # direct multiplier on the base risk-per-trade (neutral fallback
-        # to 1.0 handled inside compute_position_size when None).
-        kelly_scale = kelly_response["sized_fraction"] * 4  # normalize so ~0.25 sizing -> ~1.0x multiplier
+    if kelly_response.get("full_kelly_fraction") is not None:
+        # FIXED A REAL, CONFIRMED BUG (2026-09-25): this previously read
+        # kelly_response["sized_fraction"] -- but sized_fraction is
+        # ALREADY the quarter-Kelly output (full_kelly_fraction *
+        # kelly_fraction_used, e.g. 0.25), so it's intentionally a
+        # small number (a real observed value: full_kelly=0.0536 ->
+        # sized_fraction=0.0134). Multiplying that already-small number
+        # by 4 produced kelly_scale=0.0536 -- effectively killing
+        # position size to ~5% of intended risk, which combined with
+        # vol_scale to size a fired, 100%-confidence signal down to 0
+        # lots even though a strike was correctly selected and capital
+        # was available. The *4 normalization comment ("~0.25 sizing ->
+        # ~1.0x multiplier") was written assuming a ~0.25-scale input --
+        # that assumption matches full_kelly_fraction (the raw,
+        # un-quarter-scaled Kelly estimate), not sized_fraction. Now
+        # normalizes against full_kelly_fraction directly, restoring
+        # the intended "~0.25 full Kelly -> ~1.0x multiplier" behavior.
+        kelly_scale = kelly_response["full_kelly_fraction"] * 4
 
     vol_response = await vol_scaled_sizing_signal(index_id, base_size=100000, window=30)
     vol_scale = vol_response.get("scale")
@@ -866,6 +1245,7 @@ async def position_size_signal(index_id: str, available_capital: float | None = 
     return {
         "status": "ok", "index_id": index_id, "model_id": "position_sizing",
         "direction": strike_response.get("direction"), "selected_strike": selected,
+        "quant_confidence": strike_response.get("quant_confidence"),
         **sizing_result, "computed_at": datetime.utcnow().isoformat(),
     }
 
@@ -895,8 +1275,12 @@ async def positions_open(index_id: str = None):
 
 
 @app.get("/trade-log")
-async def trade_log(limit: int = 100):
-    rows = get_trade_log(limit=limit)
+async def trade_log(limit: int = 100, offset: int = 0):
+    # Validated/clamped (2026-10-08, pagination fix) so the API never
+    # tries to load an unbounded number of rows into the UI at once.
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+    rows = get_trade_log(limit=limit, offset=offset)
     return {"status": "ok", "count": len(rows), "trades": rows}
 
 
@@ -1055,6 +1439,31 @@ async def trade_log_stats():
     return {"status": "ok", **get_trade_log_stats()}
 
 
+@app.get("/option-chain-history/status")
+async def option_chain_history_status(index_id: str = "NIFTY50"):
+    """
+    Read-only progress check for the historical option-chain capture
+    loop added 2026-10-12 (see option_chain_history_loop in pollers.py).
+    Lets you track accumulation (e.g. row count, loop health) without
+    querying the SQLite file directly. Does not affect any trading path.
+    """
+    index_id = index_id.upper()
+    row_count = get_option_chain_history_count(index_id)
+    poller = shared_state.poller_status.get("option_chain_history", {})
+    return {
+        "status": "ok", "index_id": index_id, "rows_captured": row_count,
+        "poller_running": poller.get("running", False),
+        "last_success": poller.get("last_success"),
+        "last_error": poller.get("last_error"),
+        "last_skipped_reason": poller.get("last_skipped_reason"),
+        "skipped_stale_count": poller.get("skipped_stale_count", 0),
+        "last_snapshot_bucket": poller.get("last_snapshot_bucket"),
+        "last_snapshot_rows": poller.get("last_snapshot_rows"),
+        "last_snapshot_strikes": poller.get("last_snapshot_strikes"),
+        "last_snapshot_chain_age_seconds": poller.get("last_snapshot_chain_age_seconds"),
+    }
+
+
 @app.get("/trade-log/detailed-stats")
 async def trade_log_detailed_stats(index_id: str = None, start_date: str = None, end_date: str = None):
     """
@@ -1132,7 +1541,7 @@ async def trade_log_clear(confirm: bool = False):
 @app.post("/paper/enter/{index_id}")
 async def paper_enter(index_id: str, available_capital: float | None = None,
                        risk_per_trade_pct: float = 2.0, hard_sl_pct: float = 27.0,
-                       min_confidence: float = 0.5):
+                       min_confidence: float | None = None):
     """
     Manual-trigger paper entry (Step 36) — evaluates the confluence
     gate, selects a strike, sizes the position, and opens a paper
@@ -1189,10 +1598,17 @@ class IndexRiskParamsUpdate(BaseModel):
     risk_per_trade_pct: float | None = None
     min_confluence_confidence: float | None = None
     max_entry_iv_rank: float | None = None
+    require_vwap: bool | None = None
+    require_chart_confirmation: bool | None = None
 
 
 @app.post("/config/indices/{index_id}/risk")
 async def update_index_risk_endpoint(index_id: str, updates: IndexRiskParamsUpdate):
+    # NOTE: booleans use "is not None" (not the truthy-only filter a
+    # naive dict comprehension would give) so that explicitly saving
+    # False (turning a toggle OFF) is never silently dropped the way
+    # `if v` would drop it. dict(exclude_unset via manual check below)
+    # keeps every field the caller actually sent, float or bool alike.
     non_null_updates = {k: v for k, v in updates.dict().items() if v is not None}
     new_config = update_index_risk_params(index_id.upper(), non_null_updates)
     if new_config is None:
@@ -1246,7 +1662,7 @@ async def get_account_config_endpoint():
 class AccountConfigUpdate(BaseModel):
     total_available_capital: float | None = None
     auto_entry_enabled: bool | None = None
-    auto_entry_poll_seconds: int | None = None
+    auto_entry_poll_seconds: float | None = None
     daily_loss_limit_pct: float | None = None
     consecutive_loss_throttle: int | None = None
     consecutive_loss_size_multiplier: float | None = None
@@ -1275,7 +1691,8 @@ async def backtest_run(index_id: str, candle_limit: int = 2000, initial_capital:
                         risk_per_trade_pct: float = None, hard_sl_pct: float = None,
                         time_stop_minutes: int = None, tsl_activation_pct: float = None,
                         tsl_base_trail_pct: float = None, tsl_k: float = None, tsl_floor_pct: float = None,
-                        min_confidence: float = None, walk_forward: bool = False, save_to_history: bool = True):
+                        min_confidence: float = None, require_chart_confirmation: bool = None,
+                        require_vwap: bool = None, walk_forward: bool = False, save_to_history: bool = True):
     """
     PRD §6 — replays stored historical candles through the same gate +
     risk engine logic used live. See engine/backtest/engine.py for the
@@ -1287,6 +1704,14 @@ async def backtest_run(index_id: str, candle_limit: int = 2000, initial_capital:
     a backtest reflects exactly what live trading would do right now,
     but you can pass explicit overrides to experiment with different
     settings before deciding whether to apply them.
+
+    require_chart_confirmation / require_vwap (added 2026-09-30): these
+    now ACTUALLY control the backtest gate (see engine/backtest/engine.py)
+    -- previously chart confirmation was silently hardcoded mandatory
+    and VWAP wasn't computed in the backtest at all, so no combination
+    of these two live toggles could be meaningfully backtested. Left as
+    None, both fall back to this index's live setting, same pattern as
+    every other param here.
 
     walk_forward=True splits the candle history 70/30 (train/test) and
     runs both segments separately, so you can see if performance holds
@@ -1312,6 +1737,8 @@ async def backtest_run(index_id: str, candle_limit: int = 2000, initial_capital:
         "tsl_k": tsl_k if tsl_k is not None else live_risk["tsl_k"],
         "tsl_floor_pct": tsl_floor_pct if tsl_floor_pct is not None else live_risk["tsl_floor_pct"],
         "min_confidence": min_confidence if min_confidence is not None else live_risk["min_confluence_confidence"],
+        "require_chart_confirmation": require_chart_confirmation if require_chart_confirmation is not None else live_risk.get("require_chart_confirmation", True),
+        "require_vwap": require_vwap if require_vwap is not None else live_risk.get("require_vwap", False),
     }
 
     if not walk_forward:
@@ -1342,6 +1769,55 @@ async def backtest_run(index_id: str, candle_limit: int = 2000, initial_capital:
         "params_used": effective_params, "train": train_result, "test": test_result,
         "note": "Compare train vs test summary stats — if test performance is much worse than train, the strategy may be overfit to the training period.",
     }
+
+
+@app.get("/backtest/run_bs/{index_id}")
+async def backtest_run_bs(index_id: str, candle_limit: int = 200000, initial_capital: float = 30000,
+                           risk_per_trade_pct: float = None, hard_sl_pct: float = None,
+                           time_stop_minutes: int = None, tsl_activation_pct: float = None,
+                           tsl_base_trail_pct: float = None, tsl_k: float = None, tsl_floor_pct: float = None,
+                           min_confidence: float = None, require_chart_confirmation: bool = None,
+                           require_vwap: bool = None, log_all_trades: bool = True):
+    """
+    Black-Scholes-priced backtest (added 2026-09-30), separate from
+    /backtest/run above. Uses engine/backtest/engine_bs.py's run_backtest_bs,
+    which prices every trade with real Black-Scholes (real ATM strike, real
+    weekly-expiry time decay, realized-vol-estimated sigma) instead of the
+    original engine's flat approx_entry_premium linear-delta approximation
+    — see engine/backtest/bs_pricer.py's module docstring for the full,
+    honest accuracy statement. This does NOT replace /backtest/run or touch
+    INDEX_CONFIG (live settings) in any way — purely additive, read-only
+    against stored candle history. log_all_trades=True (default) returns
+    every individual trade with entry/exit timestamps, strike, spot,
+    premium, sigma used, P&L, and exit reason for full auditability.
+    """
+    index_id = index_id.upper()
+    candles = get_recent_candles(index_id, limit=candle_limit)
+    if len(candles) < 150:
+        return {"status": "error", "message": f"Not enough candle history ({len(candles)} candles) — run /backfill/extended/{index_id}?days=730 first."}
+
+    live_config = get_index_config(index_id)
+    if live_config is None:
+        return {"status": "error", "message": f"Unknown index '{index_id}'"}
+    live_risk = live_config["risk_params"]
+    effective_params = {
+        "initial_capital": initial_capital,
+        "risk_per_trade_pct": risk_per_trade_pct if risk_per_trade_pct is not None else live_risk["risk_per_trade_pct"],
+        "hard_sl_pct": hard_sl_pct if hard_sl_pct is not None else live_risk["hard_sl_pct"],
+        "time_stop_minutes": time_stop_minutes if time_stop_minutes is not None else live_risk["time_stop_minutes"],
+        "tsl_activation_pct": tsl_activation_pct if tsl_activation_pct is not None else live_risk["tsl_activation_pct"],
+        "tsl_base_trail_pct": tsl_base_trail_pct if tsl_base_trail_pct is not None else live_risk["tsl_base_trail_pct"],
+        "tsl_k": tsl_k if tsl_k is not None else live_risk["tsl_k"],
+        "tsl_floor_pct": tsl_floor_pct if tsl_floor_pct is not None else live_risk["tsl_floor_pct"],
+        "min_confidence": min_confidence if min_confidence is not None else live_risk["min_confluence_confidence"],
+        "require_chart_confirmation": require_chart_confirmation if require_chart_confirmation is not None else live_risk.get("require_chart_confirmation", True),
+        "require_vwap": require_vwap if require_vwap is not None else live_risk.get("require_vwap", False),
+        "log_all_trades": log_all_trades,
+    }
+
+    result = run_backtest_bs(candles, index_id, **effective_params)
+    return {"status": "ok", "index_id": index_id, "candle_count": len(candles),
+            "params_used": effective_params, **result}
 
 
 @app.get("/backtest/history")

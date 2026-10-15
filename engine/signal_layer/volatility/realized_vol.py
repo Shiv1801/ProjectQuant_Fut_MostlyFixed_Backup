@@ -1,37 +1,70 @@
+
 """
-Group A: Realized Volatility, computed from stored 1-min candle closes.
-This is the first real quant model in the A-G stack (PRD §3.5-A).
-Formula: annualized stdev of log returns over the trailing window.
+Group A: Realized Volatility from stored one-minute candle closes.
+
+Output unit: annualized volatility in percentage points.
+Assumes consecutive input prices represent consecutive one-minute
+observations during regular trading sessions.
 """
+
 import math
+
+TRADING_DAYS_PER_YEAR = 252
+MINUTES_PER_SESSION = 375
+ANNUALIZATION_FACTOR = math.sqrt(
+    TRADING_DAYS_PER_YEAR * MINUTES_PER_SESSION
+)
 
 
 def compute_realized_vol(closes: list[float]) -> dict:
-    """
-    closes: list of close prices, oldest first, at least 2 needed.
-    Returns annualized volatility (%) using log returns, scaled by
-    sqrt(252 trading days * 375 one-min bars/day).
-    """
-    if len(closes) < 2:
-        return {"realized_vol_pct": None, "sample_size": len(closes), "note": "need at least 2 candles"}
+    if closes is None or len(closes) < 3:
+        return {
+            "realized_vol_pct": None,
+            "sample_size": 0 if closes is None else max(0, len(closes) - 1),
+            "note": "need at least 3 candle closes",
+        }
 
-    log_returns = []
-    for i in range(1, len(closes)):
-        if closes[i - 1] <= 0 or closes[i] <= 0:
-            continue
-        log_returns.append(math.log(closes[i] / closes[i - 1]))
+    try:
+        prices = [float(price) for price in closes]
+    except (TypeError, ValueError, OverflowError):
+        return {
+            "realized_vol_pct": None,
+            "sample_size": 0,
+            "note": "invalid price data: non-numeric value",
+        }
 
-    if len(log_returns) < 2:
-        return {"realized_vol_pct": None, "sample_size": len(log_returns), "note": "not enough valid returns"}
+    if not all(math.isfinite(p) and p > 0 for p in prices):
+        return {
+            "realized_vol_pct": None,
+            "sample_size": 0,
+            "note": "invalid price data: prices must be finite and positive",
+        }
 
-    mean = sum(log_returns) / len(log_returns)
-    variance = sum((r - mean) ** 2 for r in log_returns) / (len(log_returns) - 1)
-    stdev = math.sqrt(variance)
+    # Log differences avoid unnecessary division before taking logarithms.
+    log_returns = [
+        math.log(prices[i]) - math.log(prices[i - 1])
+        for i in range(1, len(prices))
+    ]
 
-    annualized_vol = stdev * math.sqrt(252 * 375) * 100  # as percentage
+    n = len(log_returns)
+    mean_return = math.fsum(log_returns) / n
+
+    variance = math.fsum(
+        (r - mean_return) ** 2 for r in log_returns
+    ) / (n - 1)
+
+    vol_pct = math.sqrt(variance) * ANNUALIZATION_FACTOR * 100
+
+    if not math.isfinite(vol_pct):
+        return {
+            "realized_vol_pct": None,
+            "sample_size": n,
+            "note": "non-finite volatility estimate",
+        }
 
     return {
-        "realized_vol_pct": round(annualized_vol, 2),
-        "sample_size": len(log_returns),
-        "window_minutes": len(closes),
+        "realized_vol_pct": round(vol_pct, 4),
+        "sample_size": n,
+        "window_minutes": len(prices),
+        "note": None,
     }

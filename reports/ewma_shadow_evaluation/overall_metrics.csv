@@ -1,0 +1,2 @@
+﻿group,n,mae_baseline,mae_candidate,mae_improvement_candidate_vs_baseline,rmse_baseline,rmse_candidate,bias_baseline,bias_candidate,corr_baseline,corr_candidate,candidate_win_rate
+all_matured_live_forecasts,63,2.0054851449667246,1.997914160184639,0.0075709847820853125,2.1912547428410614,2.197444212887774,-1.346784790440473,-1.3495877855907799,0.23780372312430217,0.22812805080860013,0.6507936507936508

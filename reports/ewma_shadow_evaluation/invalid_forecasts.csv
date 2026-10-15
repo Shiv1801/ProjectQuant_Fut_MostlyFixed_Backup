@@ -1,0 +1,6 @@
+﻿timestamp,reason
+2026-10-13 12:26:00,"logged_close_mismatch: log=22524.4, DB=22521.15"
+2026-10-13 12:27:00,"logged_close_mismatch: log=22518.1, DB=22522.7"
+2026-10-13 12:28:00,"logged_close_mismatch: log=22527.3, DB=22532.9"
+2026-10-13 12:29:00,"logged_close_mismatch: log=22531.9, DB=22534.95"
+2026-10-13 12:30:00,"logged_close_mismatch: log=22546.1, DB=22539.65"

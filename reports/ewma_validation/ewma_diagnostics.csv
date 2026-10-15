@@ -1,0 +1,16 @@
+﻿check,value,status
+database_path,C:\Users\Shivam.Joshi\OneDrive - Magnit\Documents\my\trade\Project\project-trade\project-trade\data\project_trade.db,PASS
+raw_historical_rows,181878,INFO
+valid_historical_ohlc_rows,181878,PASS
+invalid_historical_ohlc_rows_excluded,0,INFO
+contiguous_same_day_runs,587,INFO
+total_cases,4773,PASS
+development_cases,3341,INFO
+holdout_cases,1432,INFO
+common_case_count,4773,PASS
+lambda_grid,"0.90,0.91,0.92,0.93,0.94,0.95,0.96,0.97,0.98,0.99",INFO
+initialization_lengths,1..30 returns,INFO
+selection_rule,development MAE then RMSE; holdout not used for selection,PASS
+db_access,SQLite mode=ro,PASS
+live_model_or_settings_changed,No,PASS
+holdout_date_cluster_bootstrap,3000 reps; seed 20261013,INFO

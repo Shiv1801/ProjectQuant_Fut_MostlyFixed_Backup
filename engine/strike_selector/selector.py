@@ -6,7 +6,24 @@ of profit" — factors delta (sweet spot band), liquidity (bid-ask
 spread), and IV rank (avoid buying already-rich premium).
 """
 
-DELTA_TARGET_RANGE = (0.30, 0.40)  # starting hypothesis per PRD — needs backtest validation
+DELTA_TARGET_RANGE = (0.45, 0.55)  # per explicit request (2026-09-25), moved closer to ATM
+# from the original (0.30, 0.40) "starting hypothesis per PRD" band.
+# NOT backtested at this new value -- the prior band was never
+# validated either, and this change was made without a comparison
+# backtest, on an explicit decision to prioritize speed over testing
+# first (see chat: "chose the fastest and nearst strike"). REAL,
+# KNOWN TRADE-OFF, recorded here so it isn't lost: closer-to-ATM
+# strikes cost more premium (higher capital per lot, lower leverage)
+# but respond faster to underlying moves (likely higher win rate,
+# smaller max loss per trade). The 5-year backtest under the OLD
+# 0.30-0.40 band showed a 35.4% win rate with a 3.1:1 average win/
+# loss ratio, and the top 5 trades (of 206) carried 140% of total net
+# P&L -- i.e. that band's profitability depended heavily on rare,
+# large directional moves. This new band should reduce that
+# dependency, but will very likely also shrink the size of those big
+# wins, since less leverage is being bought per rupee of premium.
+# Whether NET result improves or worsens is genuinely unknown without
+# re-running the backtest against this new value.
 MAX_SPREAD_PCT = 3.0               # max acceptable bid-ask spread as % of mid price
 MAX_IV_RANK = 70                   # avoid strikes where IV is already in a high historical percentile
 

@@ -1,0 +1,10 @@
+﻿check,result,status
+database_read_mode,SQLite URI mode=ro,PASS
+raw_historical_rows,181878,INFO
+valid_ohlc_rows,181878,PASS
+excluded_invalid_rows,0,INFO
+contiguous_runs,587,INFO
+cases,4773,PASS
+dev_holdout,3341/1432,INFO
+calibration_parameters,affine actual=2.25034832+0.67839991*forecast; scale=0.90137695; fitted on dev only,INFO
+production_changed,No,PASS

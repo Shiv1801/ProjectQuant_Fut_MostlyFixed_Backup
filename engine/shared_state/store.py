@@ -47,10 +47,18 @@ class SharedState:
         self.depth: dict[str, dict] = {}             # {"NIFTY50": {...depth response...}, ...}
         self.depth_updated_at: dict[str, str] = {}
 
+        # Separate diagnostic store for standard NIFTY monthly futures.
+        # This must never overwrite the existing spot-index depth store.
+        self.futures_depth: dict[str, dict] = {}
+        self.futures_depth_errors: dict[str, str] = {}
+        self.futures_contracts: list[dict] = []
+        self.futures_contracts_updated_at: str | None = None
+
         self.poller_status: dict[str, dict] = {
             "prices": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
             "option_chain": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
             "depth": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
+            "futures_depth": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
             "decision_loop": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
             "position_monitor": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
         }
@@ -91,6 +99,29 @@ class SharedState:
 
     def get_depth(self, index_id: str) -> dict | None:
         return self.depth.get(index_id)
+
+    # ---- Standard NIFTY monthly futures depth (diagnostic only) ----
+    def set_futures_contracts(self, contracts: list[dict]):
+        self.futures_contracts = list(contracts)
+        self.futures_contracts_updated_at = now_ist_iso()
+
+    def set_futures_depth(self, symbol: str, data: dict, contract: dict):
+        self.futures_depth[symbol] = {
+            "symbol": symbol,
+            "raw": data,
+            "expiry_utc": contract.get("expiry_utc"),
+            "expiry_epoch": contract.get("expiry_epoch"),
+            "lot_size": contract.get("lot_size"),
+            "tick_size": contract.get("tick_size"),
+            "updated_at": now_ist_iso(),
+        }
+        self.futures_depth_errors.pop(symbol, None)
+
+    def get_futures_depth(self, symbol: str) -> dict | None:
+        return self.futures_depth.get(symbol)
+
+    def set_futures_depth_error(self, symbol: str, error: str):
+        self.futures_depth_errors[symbol] = error
 
     # ---- Poller health ----
     def mark_poller_success(self, poller_name: str):

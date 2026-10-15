@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -9,6 +9,19 @@
       padding: 4px 12px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
     }
     .exit-trade-btn:hover { background: #ef4444; }
+
+    .live-test-buy-btn, .live-test-sell-btn {
+      border: none; border-radius: 3px; padding: 7px 16px; font-family: inherit;
+      font-size: 11px; font-weight: 700; cursor: pointer;
+    }
+    .live-test-buy-btn { background: #4ade80; color: #06130a; }
+    .live-test-buy-btn:hover { background: #22c55e; }
+    .live-test-sell-btn { background: #f87171; color: #160606; }
+    .live-test-sell-btn:hover { background: #ef4444; }
+    .live-test-buy-btn:disabled, .live-test-sell-btn:disabled {
+      opacity: .55; cursor: not-allowed;
+    }
+
     .exit-trade-btn:disabled { background: var(--card-inset); color: var(--text-muted); cursor: not-allowed; }
     :root {
       --bg: #0a0e14; --card: #131820; --card-inset: #0e1218; --group-header: #161c26;
@@ -141,6 +154,7 @@
             <div style="font-size:11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Confluence Gate</div>
             <div id="confluenceStatus" style="font-size: 18px; font-weight: bold;">—</div>
             <div class="footer-note" id="confluenceDetail" style="margin-top: 6px;"></div>
+            <div class="footer-note" id="vwapDetail" style="margin-top: 6px;"></div>
           </div>
           <div id="strikeSelectorBox" style="border: 1px solid var(--border-default); border-radius: 4px; padding: 12px; margin-bottom: 14px; background: var(--card-inset); display: none;">
             <div style="font-size:11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Selected Strike</div>
@@ -212,6 +226,14 @@
             <div class="model-value" id="ofiValue">—</div>
           </div>
           <div class="footer-note" id="ofiNote" style="margin-top:6px;"></div>
+          <div class="model-row" style="margin-top:10px;">
+            <div>
+              <div class="model-name">NIFTY50 Futures OFI</div>
+              <div class="model-group">Group C ? Diagnostic only</div>
+            </div>
+            <div class="model-value" id="futuresOfiValue">&mdash;</div>
+          </div>
+          <div class="footer-note" id="futuresOfiNote" style="margin-top:6px;"></div>
           <div class="model-row" style="margin-top:10px;">
             <div>
               <div class="model-name">Gamma Exposure</div>
@@ -287,7 +309,17 @@
             <div class="model-value" id="volScaledValue">—</div>
           </div>
           <div class="footer-note" id="volScaledNote" style="margin-top:6px;"></div>
-          <div class="footer-note" style="margin-top:10px;">More models (Group G) added in upcoming steps.</div>
+          <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-default);">
+            <div class="footer-note" style="margin-bottom: 6px;">ML Ensemble</div>
+          </div>
+          <div class="model-row">
+            <div>
+              <div class="model-name">GBT Classifier (threshold-gated)</div>
+              <div class="model-group">Group G</div>
+            </div>
+            <div class="model-value" id="groupGValue">—</div>
+          </div>
+          <div class="footer-note" id="groupGNote" style="margin-top:6px;"></div>
         </div>
       </div>
     </section>
@@ -350,6 +382,21 @@
         <div style="font-size:12px; margin-bottom:10px;">Last Auto-Entry Cycle (per index)</div>
         <div id="autoEntryCycleStatus" class="footer-note">No cycle data yet — enable auto-entry to see live status here.</div>
       </div>
+      <div class="card" style="margin-bottom:14px; border:1px solid #f87171;">
+        <div style="font-size:12px; margin-bottom:8px; color:#f87171; font-weight:700;">LIVE ORDER TEST — REAL MONEY</div>
+        <div class="footer-note" style="margin-bottom:10px;">
+          These controls submit real Fyers orders. BUY places one ATM NIFTY 50 lot; SELL attempts to close the matching existing LIVE long position.
+          Use only when you intentionally want to test live execution.
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="testBuyCeBtn" class="live-test-buy-btn" onclick="testOrder('buy_ce', this)">BUY CE</button>
+          <button id="testBuyPeBtn" class="live-test-buy-btn" onclick="testOrder('buy_pe', this)">BUY PE</button>
+          <button id="testSellCeBtn" class="live-test-sell-btn" onclick="testOrder('sell_ce', this)">SELL CE</button>
+          <button id="testSellPeBtn" class="live-test-sell-btn" onclick="testOrder('sell_pe', this)">SELL PE</button>
+        </div>
+        <div class="footer-note" id="testOrderStatus" style="margin-top:10px;"></div>
+      </div>
+
       <div class="card">
         <div style="font-size:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
           <span>Open Positions (Paper)</span>
@@ -388,7 +435,7 @@
           </label>
           <button id="applyStatsFilterBtn" style="padding: 6px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Apply</button>
           <button id="resetStatsFilterBtn" style="padding: 6px 14px; background: transparent; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px;">Reset</button>
-          <button id="downloadCsvBtn" style="padding: 6px 14px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px; margin-left: auto;">⬇ Download CSV</button>
+          <button id="downloadCsvBtn" style="padding: 6px 14px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; font-family: inherit; cursor: pointer; font-size: 13px; margin-left: auto;">â¬‡ Download CSV</button>
         </div>
       </div>
 
@@ -419,13 +466,18 @@
               <th>Index</th><th>Strike</th><th>Direction</th><th>Lots</th>
               <th>Entry Date</th><th>Entry Time</th><th>Entry ₹</th>
               <th>Exit Date</th><th>Exit Time</th><th>Exit ₹</th>
-              <th>Reason</th><th>P&L</th><th>P&L %</th><th>Hold (min)</th>
+              <th>Reason</th><th>P&L</th><th>P&L %</th><th>Hold (min)</th><th>Conf.</th>
             </tr>
           </thead>
           <tbody id="tradeLogBody">
-            <tr><td colspan="14" class="placeholder">No closed trades yet</td></tr>
+            <tr><td colspan="15" class="placeholder">No closed trades yet</td></tr>
           </tbody>
         </table>
+        <div style="display:flex; justify-content:center; align-items:center; gap:14px; margin-top:10px;">
+          <button id="tradeLogPrevBtn" style="padding: 3px 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-size: 12px;">â† Previous</button>
+          <span class="footer-note" id="tradeLogPageLabel">Page 1</span>
+          <button id="tradeLogNextBtn" style="padding: 3px 12px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-size: 12px;">Next →</button>
+        </div>
       </div>
     </section>
 
@@ -554,6 +606,60 @@
           <div class="row"><span class="row-label">Low</span><span>${d.low}</span></div>
           <div class="row"><span class="row-label">Prev Close</span><span>${d.prev_close}</span></div>
         </div>`;
+    }
+
+    async function testOrder(action, buttonEl) {
+      const labels = {
+        buy_ce: "BUY CE",
+        buy_pe: "BUY PE",
+        sell_ce: "SELL CE",
+        sell_pe: "SELL PE",
+      };
+      const label = labels[action] || action;
+      const confirmed = confirm(
+        `${label} — REAL MONEY ORDER\n\n` +
+        `This will use the live Fyers execution path.\n` +
+        (action.startsWith("buy_")
+          ? "It will place exactly 1 ATM NIFTY 50 lot."
+          : "It will close the matching existing LIVE long position.") +
+        `\n\nContinue?`
+      );
+      if (!confirmed) return;
+
+      const statusEl = document.getElementById("testOrderStatus");
+      const allButtons = document.querySelectorAll(".live-test-buy-btn, .live-test-sell-btn");
+      allButtons.forEach(b => b.disabled = true);
+      const originalLabel = buttonEl.innerText;
+      buttonEl.innerText = "Sending...";
+      statusEl.innerText = `${label} submitting...`;
+      statusEl.style.color = "#fbbf24";
+
+      try {
+        const res = await fetch(`${BASE}/positions/test-order`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm_real_money: true, action }),
+        });
+        const payload = await res.json();
+
+        if (res.ok && payload.status === "ok") {
+          statusEl.innerText = `✓ ${payload.message || label + " accepted"}`;
+          statusEl.style.color = "#4ade80";
+          buttonEl.innerText = `${label} ✓`;
+          if (typeof refreshPositions === "function") await refreshPositions();
+          if (typeof refreshTradeLog === "function") await refreshTradeLog();
+        } else {
+          statusEl.innerText = `${label} failed: ${payload.message || payload.detail || `HTTP ${res.status}`}`;
+          statusEl.style.color = "#f87171";
+          buttonEl.innerText = originalLabel;
+        }
+      } catch (err) {
+        statusEl.innerText = `${label} failed: ${err.message || err}`;
+        statusEl.style.color = "#f87171";
+        buttonEl.innerText = originalLabel;
+      } finally {
+        allButtons.forEach(b => b.disabled = false);
+      }
     }
 
     async function refreshDashboard() {
@@ -791,9 +897,33 @@
           }
           const confPct = gate.quant_confidence !== undefined ? (gate.quant_confidence * 100).toFixed(0) : "—";
           detailEl.innerText = `quant confidence: ${confPct}% · ${gate.veto_reason || 'both legs agree'}`;
+
+          // VWAP (Leg 3) display — added 2026-10-06, per explicit requirement:
+          // only shows a VWAP number when it was genuinely calculated
+          // (leg3.available === true); otherwise shows UNAVAILABLE + the
+          // real reason, never a fabricated/zero value.
+          const vwapEl = document.getElementById("vwapDetail");
+          const leg3 = gate.leg3;
+          if (leg3 && leg3.available) {
+            const sideLabel = leg3.side === "above" ? "ABOVE VWAP" : leg3.side === "below" ? "BELOW VWAP" : "AT VWAP";
+            const bullishConfirm = gate.vwap_confirmed === true ? "YES" : (gate.vwap_confirmed === false ? "NO" : "—");
+            // status: "FRESH" (latest candle itself had volume) or
+            // "STALE_CURRENT_CANDLE" (current candle's volume hasn't
+            // arrived yet -- VWAP shown is still the last valid one,
+            // added 2026-10-06 per explicit requirement, not a bug).
+            const statusLabel = leg3.status === "STALE_CURRENT_CANDLE" ? " · STALE (current candle volume pending)" : "";
+            vwapEl.innerText = `VWAP: ${leg3.vwap} · Price: ${leg3.price} · ${sideLabel} · Bullish confirmation: ${bullishConfirm} · Volume candles: ${leg3.volume_candles_count}${statusLabel}`;
+            vwapEl.style.color = leg3.status === "STALE_CURRENT_CANDLE" ? "#fbbf24" : "";
+          } else if (leg3) {
+            vwapEl.innerText = `VWAP: UNAVAILABLE · Reason: ${leg3.reason || "unknown"}`;
+            vwapEl.style.color = "#fbbf24";
+          } else {
+            vwapEl.innerText = "";
+          }
         } else {
           statusEl.innerText = "—";
           detailEl.innerText = gate.message || "";
+          document.getElementById("vwapDetail").innerText = "";
           strikeBox.style.display = "none";
         }
       } catch {}
@@ -894,19 +1024,93 @@
       } catch {}
 
       try {
+        const ofiEl = document.getElementById("ofiValue");
+        const ofiNoteEl = document.getElementById("ofiNote");
         const ofiRes = await fetch(`${BASE}/signals/ofi/${currentChartIndex}`);
         const ofi = await ofiRes.json();
-        const ofiEl = document.getElementById("ofiValue");
-        if (ofi.status === "ok" && ofi.ofi !== null && ofi.ofi !== undefined) {
-          ofiEl.innerText = `${ofi.ofi}`;
+
+        if (
+          (ofi.status === "ok" || ofi.status === "valid") &&
+          typeof ofi.ofi === "number" &&
+          Number.isFinite(ofi.ofi)
+        ) {
+          // Prefer actual spot order-flow imbalance when available.
+          ofiEl.innerText = ofi.ofi.toFixed(4);
           ofiEl.style.color = ofi.ofi > 0.2 ? "#4ade80" : (ofi.ofi < -0.2 ? "#f87171" : "");
-          document.getElementById("ofiNote").innerText = ofi.interpretation || "";
+          ofiNoteEl.innerText = `Spot OFI ? ${ofi.interpretation || "available"}`;
+        } else if (currentChartIndex === "NIFTY50") {
+          // Spot depth may be unavailable; fall back to the separate futures diagnostic.
+          const futuresRes = await fetch(`${BASE}/signals/ofi/NIFTY50/futures`);
+          if (!futuresRes.ok) throw new Error(`Futures OFI HTTP ${futuresRes.status}`);
+          const futures = await futuresRes.json();
+
+          if (
+            futures.status === "ok" &&
+            typeof futures.combined_ofi === "number" &&
+            Number.isFinite(futures.combined_ofi)
+          ) {
+            ofiEl.innerText = futures.combined_ofi.toFixed(4);
+            ofiEl.style.color = "";
+            ofiNoteEl.innerText =
+              `Futures OFI fallback ? ${futures.valid_contracts}/${futures.expected_contracts} contracts ? diagnostic only`;
+          } else {
+            ofiEl.innerText = "?";
+            ofiEl.style.color = "";
+            ofiNoteEl.innerText = futures.note || futures.message || `Futures OFI status: ${futures.status || "unavailable"}`;
+          }
         } else {
-          ofiEl.innerText = "—";
+          ofiEl.innerText = "?";
           ofiEl.style.color = "";
-          document.getElementById("ofiNote").innerText = ofi.message || ofi.note || "";
+          ofiNoteEl.innerText = ofi.note || ofi.message || "Spot depth unavailable";
         }
-      } catch {}
+      } catch (err) {
+        const ofiEl = document.getElementById("ofiValue");
+        ofiEl.innerText = "?";
+        ofiEl.style.color = "";
+        document.getElementById("ofiNote").innerText = "OFI fetch failed; check API connection.";
+      }
+
+      // NIFTY50 futures OFI is diagnostic-only and is not used for trading.
+      try {
+        const futuresValueEl = document.getElementById("futuresOfiValue");
+        const futuresNoteEl = document.getElementById("futuresOfiNote");
+
+        if (currentChartIndex !== "NIFTY50") {
+          futuresValueEl.innerText = "NIFTY50 only";
+          futuresValueEl.style.color = "";
+          futuresNoteEl.innerText = "Futures OFI endpoint is currently available for NIFTY50.";
+        } else {
+          const futuresRes = await fetch(`${BASE}/signals/ofi/NIFTY50/futures`);
+          if (!futuresRes.ok) throw new Error(`HTTP ${futuresRes.status}`);
+          const futures = await futuresRes.json();
+
+          if (
+            futures.status === "ok" &&
+            typeof futures.combined_ofi === "number" &&
+            Number.isFinite(futures.combined_ofi)
+          ) {
+            futuresValueEl.innerText = futures.combined_ofi.toFixed(4);
+            futuresValueEl.style.color = "";
+            const valid = `${futures.valid_contracts ?? 0}/${futures.expected_contracts ?? 0} contracts`;
+            const age = typeof futures.max_age_seconds === "number"
+              ? ` ? max age limit ${futures.max_age_seconds}s`
+              : "";
+            futuresNoteEl.innerText =
+              `${futures.interpretation || "Value available"} ? ${valid}${age} ? diagnostic only`;
+          } else {
+            futuresValueEl.innerText = "?";
+            futuresValueEl.style.color = "";
+            futuresNoteEl.innerText =
+              futures.message || futures.note || `Futures OFI status: ${futures.status || "unavailable"}`;
+          }
+        }
+      } catch (err) {
+        const futuresValueEl = document.getElementById("futuresOfiValue");
+        const futuresNoteEl = document.getElementById("futuresOfiNote");
+        if (futuresValueEl) futuresValueEl.innerText = "?";
+        if (futuresValueEl) futuresValueEl.style.color = "";
+        if (futuresNoteEl) futuresNoteEl.innerText = "Futures OFI unavailable; check API connection.";
+      }
 
       try {
         const gexRes = await fetch(`${BASE}/signals/gex/${currentChartIndex}`);
@@ -1021,6 +1225,24 @@
         } else {
           kellyEl.innerText = "—";
           document.getElementById("kellyNote").innerText = kelly.note || "";
+        }
+      } catch {}
+
+      try {
+        const groupGRes = await fetch(`${BASE}/signals/group-g-status`);
+        const groupG = await groupGRes.json();
+        const groupGEl = document.getElementById("groupGValue");
+        if (groupG.status === "ok" && groupG.active) {
+          groupGEl.innerText = `active (val acc ${(groupG.model_val_accuracy * 100).toFixed(1)}%)`;
+          groupGEl.style.color = groupG.model_beats_baseline ? "#4ade80" : "#facc15";
+          document.getElementById("groupGNote").innerText = groupG.note || `trained ${groupG.model_trained_at || ""}`;
+        } else if (groupG.status === "ok") {
+          groupGEl.innerText = `inactive (${groupG.closed_linked_trade_count}/${groupG.min_trades_threshold} trades)`;
+          groupGEl.style.color = "";
+          document.getElementById("groupGNote").innerText = groupG.note || "";
+        } else {
+          groupGEl.innerText = "—";
+          document.getElementById("groupGNote").innerText = "";
         }
       } catch {}
 
@@ -1174,9 +1396,24 @@
     }
 
     const INDEX_LIST = ["NIFTY50"];  // BankNifty and FinNifty removed — Nifty-only app
+    // tsl_k and tsl_floor_pct ADDED (2026-09-29): these two were already
+    // real, saved fields in every index's risk_params (config/trading_config.py
+    // DEFAULT_RISK_PARAMS) and the backend's /config/indices/{id}/risk save
+    // endpoint already accepted them -- they just weren't rendered as inputs
+    // here, so the ONLY way to change them was editing the config file
+    // directly. This card is fully generic (renders + saves whatever keys
+    // are in this dict), so adding them here is the complete fix -- no
+    // backend change needed. Confirmed real bug this exposed: tsl_floor_pct
+    // defaulted to 5.0, which is WIDER than most tsl_base_trail_pct values
+    // people would set (e.g. 2-3%), and compute_trail_distance() takes
+    // max(floor_pct, computed_trail) -- so the floor silently overrode the
+    // base trail and k, pinning the trailing-stop giveback at a flat 5%
+    // regardless of how far profit ran, with no way to see or fix this from
+    // the UI.
     const RISK_PARAM_LABELS = {
       hard_sl_pct: "Hard SL %", time_stop_minutes: "Time Stop (min)",
       tsl_activation_pct: "TSL Activation %", tsl_base_trail_pct: "TSL Base Trail %",
+      tsl_k: "TSL Tighten Rate (k)", tsl_floor_pct: "TSL Floor %",
       risk_per_trade_pct: "Risk/Trade %", min_confluence_confidence: "Min Confidence",
     };
 
@@ -1205,10 +1442,25 @@
           </div>
         </div>
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 12px;">
-          ${Object.entries(RISK_PARAM_LABELS).map(([key, label]) => `
-            <label>${label}: <input type="number" class="idx-risk-input" data-key="${key}" value="${risk[key]}" step="0.5" style="width:100%; box-sizing: border-box; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" /></label>
-          `).join("")}
+          ${Object.entries(RISK_PARAM_LABELS).map(([key, label]) => {
+            // tsl_k is a small multiplier (typical range ~0.05-0.5) --
+            // step 0.5 would make it impossible to enter anything
+            // finer than 0/0.5/1. Every other field keeps step 0.5.
+            const step = key === "tsl_k" ? "0.01" : "0.5";
+            return `<label>${label}: <input type="number" class="idx-risk-input" data-key="${key}" value="${risk[key]}" step="${step}" style="width:100%; box-sizing: border-box; background: var(--card-inset); color: var(--text-default); border: 1px solid var(--border-default); padding: 3px 6px; border-radius: 3px;" /></label>`;
+          }).join("")}
         </div>
+        <div style="display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top: 1px solid var(--border-default); font-size: 12px;">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" class="idx-toggle-input" data-key="require_chart_confirmation" ${risk.require_chart_confirmation !== false ? "checked" : ""} />
+            Require Chart Confirmation (Leg 2)
+          </label>
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" class="idx-toggle-input" data-key="require_vwap" ${risk.require_vwap ? "checked" : ""} />
+            Require VWAP (Leg 3)
+          </label>
+        </div>
+        <div class="footer-note" style="margin-top:4px;">Quant confidence (Leg 1) always applies. Chart and VWAP are optional filters — turning either off makes the gate looser and changes trade signals as soon as you Save.</div>
         ${modeWarning}
         <button class="idx-save-btn" data-index="${indexId}" style="margin-top:8px; padding: 5px 14px; background: var(--accent); color: #0a0e14; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">Save ${LABELS[indexId] || indexId}</button>
         <span class="footer-note idx-save-status" style="margin-left:8px;"></span>
@@ -1288,6 +1540,15 @@
         return;
       }
 
+      // Leg 2 (chart) / Leg 3 (VWAP) on-off toggles -- checkboxes, not
+      // numeric inputs, so collected separately and merged into the
+      // same /config/indices/{id}/risk save. Reads the actual checked
+      // state (true/false), not presence/absence, so explicitly
+      // unchecking a box that defaults ON still saves correctly.
+      card.querySelectorAll(".idx-toggle-input").forEach(toggle => {
+        riskUpdates[toggle.dataset.key] = toggle.checked;
+      });
+
       try {
         const modeRes = await fetch(`${BASE}/config/indices/${indexId}/mode`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }),
@@ -1321,18 +1582,39 @@
         });
         const allocPayload = await allocRes.json();
 
-        if (riskPayload.status === "ok" && allocPayload.status === "ok") {
-          statusEl.innerText = "✓ Saved"; statusEl.style.color = "#4ade80";
+        // FIXED A REAL BUG: previously this showed one combined
+        // success/failure message across THREE separate POST calls
+        // (mode, risk params, capital allocation). If only the LAST
+        // one (capital allocation) failed, the message said "Save
+        // failed" even though mode and risk params (including the new
+        // require_chart_confirmation / require_vwap toggles) had
+        // ALREADY saved successfully -- this is exactly what looked
+        // like "sometimes it saves, sometimes it doesn't": it was
+        // never actually random, a partial save was just being
+        // reported as a total failure with no way to tell which part
+        // landed. Now reports each step's real, independent status.
+        const stepResults = [];
+        stepResults.push(modePayload.status === "ok" ? "Mode ✓" : `Mode ✗ (${modePayload.message || "failed"})`);
+        stepResults.push(riskPayload.status === "ok" ? "Risk params ✓" : `Risk params ✗ (${riskPayload.message || "failed"})`);
+        stepResults.push(allocPayload.status === "ok" ? "Capital % ✓" : `Capital % ✗ (${allocPayload.message || "failed"})`);
+
+        const allOk = modePayload.status === "ok" && riskPayload.status === "ok" && allocPayload.status === "ok";
+        if (allOk) {
+          statusEl.innerText = "✓ Saved (mode, risk params, capital %)"; statusEl.style.color = "#4ade80";
           setTimeout(() => { loadPerIndexSettings(); }, 800);  // let the checkmark actually be seen before the card re-renders
         } else {
-          statusEl.innerText = allocPayload.message || riskPayload.message || "Save failed";
-          statusEl.style.color = "#f87171";
+          statusEl.innerText = stepResults.join(" · "); statusEl.style.color = "#f87171";
+          statusEl.title = "Any step marked ✓ above already saved to the database -- only the ✗ step(s) need retrying.";
+          // Still reload so the card reflects whatever DID actually
+          // persist, rather than showing stale pre-save values that
+          // could be mistaken for "nothing saved."
+          setTimeout(() => { loadPerIndexSettings(); }, 1500);
         }
       } catch (err) {
         statusEl.innerText = `Error: ${err.message || err}`; statusEl.style.color = "#f87171";
         console.error("saveIndexSettings failed:", err);
       }
-      setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 3000);
+      setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 6000);
     }
 
     async function resetIndexSettings(indexId) {
@@ -1520,6 +1802,17 @@
       }
     });
 
+    document.getElementById("tradeLogPrevBtn").addEventListener("click", async () => {
+      if (tradeLogOffset <= 0) return;
+      tradeLogOffset = Math.max(0, tradeLogOffset - tradeLogLimit);
+      await refreshTradeLog();
+    });
+
+    document.getElementById("tradeLogNextBtn").addEventListener("click", async () => {
+      tradeLogOffset += tradeLogLimit;
+      await refreshTradeLog();
+    });
+
     function getStatsFilterParams() {
       const params = new URLSearchParams();
       const start = document.getElementById("statsFilterStart").value;
@@ -1613,11 +1906,19 @@
       </div>`;
     }
 
+    // Server-side pagination state (2026-10-08 fix): previously always
+    // requested only the 200 newest trades with no way to see older ones
+    // once the table grew past that -- trades were never lost from the
+    // DB, just unreachable from the UI. Now pages through the real
+    // ORDER BY id DESC LIMIT/OFFSET query in config/db.py.
+    let tradeLogOffset = 0;
+    const tradeLogLimit = 100;
+
     async function refreshTradeLog() {
       const filterParams = getStatsFilterParams();
 
       try {
-        const res = await fetch(`${BASE}/trade-log?limit=200`);
+        const res = await fetch(`${BASE}/trade-log?limit=${tradeLogLimit}&offset=${tradeLogOffset}`);
         const payload = await res.json();
         let trades = payload.status === "ok" ? payload.trades : [];
 
@@ -1644,12 +1945,20 @@
               <td style="color:${pnlColor}">${t.pnl.toFixed(0)}</td>
               <td style="color:${pnlColor}">${t.pnl_pct.toFixed(1)}%</td>
               <td>${t.hold_minutes !== null ? t.hold_minutes.toFixed(0) : "—"}</td>
+              <td>${t.quant_confidence !== null && t.quant_confidence !== undefined ? (t.quant_confidence * 100).toFixed(0) + "%" : "—"}</td>
             </tr>`;
           }).join("");
         } else {
-          body.innerHTML = `<tr><td colspan="14" class="placeholder">No trades match the current filters</td></tr>`;
+          body.innerHTML = `<tr><td colspan="15" class="placeholder">No trades match the current filters</td></tr>`;
         }
         document.getElementById("tradeLogUpdated").innerText = `${trades.length} trades shown`;
+
+        const pageNum = Math.floor(tradeLogOffset / tradeLogLimit) + 1;
+        document.getElementById("tradeLogPageLabel").innerText = `Page ${pageNum}`;
+        document.getElementById("tradeLogPrevBtn").disabled = tradeLogOffset <= 0;
+        // A full page suggests there may be more rows after it; a short/empty
+        // page means this is the last one -- no separate total-count call needed.
+        document.getElementById("tradeLogNextBtn").disabled = payload.status === "ok" && payload.trades.length < tradeLogLimit;
       } catch {}
 
       try {

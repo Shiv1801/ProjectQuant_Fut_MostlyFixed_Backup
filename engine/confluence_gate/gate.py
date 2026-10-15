@@ -27,7 +27,18 @@ optional per index (defaults OFF), NOT a blanket requirement, since:
 
 def evaluate_confluence(quant_result: dict, chart_result: dict,
                          min_confidence_threshold: float = 0.5,
-                         vwap_result: dict | None = None, require_vwap: bool = False) -> dict:
+                         vwap_result: dict | None = None, require_vwap: bool = False,
+                         require_chart: bool = True) -> dict:
+    """
+    require_chart: Leg 2 (chart structure) was previously hardcoded as a
+    mandatory AND with Leg 1 — there was no way to run on quant
+    confidence alone. Per explicit request, Leg 2 is now toggleable the
+    same way Leg 3 (VWAP) already was: when require_chart is False,
+    chart structure is evaluated for visibility (still returned in the
+    response) but never vetoes a trade — only Leg 1 (quant) is
+    mandatory. Defaults to True to preserve existing behavior for
+    anyone who hasn't explicitly turned it off.
+    """
     quant_confidence = quant_result.get("confidence", 0.0)
     quant_direction = quant_result.get("direction")
 
@@ -43,11 +54,16 @@ def evaluate_confluence(quant_result: dict, chart_result: dict,
             "leg2": None,
         }
 
-    # Leg 2 — only evaluated once Leg 1 clears the bar
+    # Leg 2 — only evaluated once Leg 1 clears the bar. Still computed
+    # and returned even when require_chart is False, so the UI always
+    # shows what chart structure said -- it just doesn't veto the trade.
     chart_verdict = chart_result.get("verdict")
     chart_confirmed = chart_result.get("confirmed", False)
 
-    if chart_verdict == "opposite":
+    if not require_chart:
+        veto_reason = None
+        fired = True
+    elif chart_verdict == "opposite":
         veto_reason = "chart_veto_opposite_structure"
         fired = False
     elif not chart_confirmed:

@@ -48,6 +48,13 @@ DEFAULT_RISK_PARAMS = {
     # recorded, not silently overridden, and the toggle remains
     # available to turn back off from Positions & Risk at any time.
     "require_vwap": True,
+    # Leg 2 of the confluence gate (chart structure). Previously
+    # hardcoded as mandatory with no way to turn it off; now toggleable
+    # from Positions & Risk exactly like require_vwap above. Defaults
+    # True to preserve prior behavior -- quant-only trading (both this
+    # AND require_vwap off) is a much looser gate and should be an
+    # explicit, deliberate choice, not the default.
+    "require_chart_confirmation": True,
 }
 
 # Per-index defaults — same PRD baseline for all three initially; each
@@ -80,6 +87,23 @@ if _persisted_index_config:
     for _index_id, _cfg in _persisted_index_config.items():
         if _index_id in INDEX_CONFIG:
             INDEX_CONFIG[_index_id] = _cfg
+            # FIXED A REAL, CONFIRMED BUG: a persisted risk_params dict
+            # (saved to the DB before this key existed) completely
+            # REPLACED the in-memory default dict above, wholesale --
+            # any risk_params key added to DEFAULT_RISK_PARAMS after
+            # that save (e.g. require_chart_confirmation, added this
+            # session) would silently be missing from what actually
+            # loads, even though the code default has it. This mirrors
+            # the same bug class already fixed for ACCOUNT_CONFIG below
+            # (see the backfill loop after DEFAULT_ACCOUNT_CONFIG) but
+            # was never applied here. Backfill any missing key from the
+            # CURRENT DEFAULT_RISK_PARAMS so a setting added after your
+            # last save still has a real value instead of silently
+            # disappearing -- your own saved values (everything already
+            # present) are left completely untouched.
+            for _rk, _rv in DEFAULT_RISK_PARAMS.items():
+                if _rk not in INDEX_CONFIG[_index_id]["risk_params"]:
+                    INDEX_CONFIG[_index_id]["risk_params"][_rk] = _rv
 
 # Account-level settings that aren't per-index (total capital pool,
 # shared circuit breakers, auto-entry polling cadence).
@@ -94,7 +118,7 @@ if _persisted_index_config:
 DEFAULT_ACCOUNT_CONFIG = {
     "total_available_capital": 150000.0,
     "auto_entry_enabled": True,
-    "auto_entry_poll_seconds": 10,
+    "auto_entry_poll_seconds": 1.5,
     "daily_loss_limit_pct": 5.0,
     "consecutive_loss_throttle": 3,
     "consecutive_loss_size_multiplier": 0.5,
@@ -121,6 +145,85 @@ DEFAULT_ACCOUNT_CONFIG = {
     "live_trading_master_enabled": False,
 }
 ACCOUNT_CONFIG = dict(DEFAULT_ACCOUNT_CONFIG)
+
+# Hard entry gates (added 2026-10-01) — see engine/risk_engine/
+# entry_gates.py for the full design rationale. These are SEPARATE from
+# the quant confluence score: binary pass/no-pass safety checks that run
+# right before a trade is sized, not a smooth contribution to
+# confidence. Account-level (not per-index) since execution-safety
+# concerns like spread/liquidity/volatility aren't inherently index-
+# specific the way risk_per_trade_pct or hard_sl_pct are — all indices
+# share the same Fyers execution environment.
+#
+# IMPORTANT, explicitly flagged per "do not guess thresholds without
+# verifying units first": liquidity (min_volume/min_oi) and volatility
+# (max_realized_vol_pct) start as None — gate framework present and
+# enabled, but those specific checks are no-ops until you set real
+# numbers after checking your own live data (e.g. a week of
+# /signals/realized-vol/NIFTY50 readings for volatility; typical
+# volume/oi on the strikes you actually tend to select for liquidity).
+# A guessed number here risks either blocking every trade or never
+# firing at all — which this file's author (an earlier Claude session)
+# could not respons
+# ibly guess without seeing your actual data, so it was
+# deliberately left for you to set rather than invented.
+#
+# Only max_spread_pct ships with a real starting number (2.0%) — this
+# one IS already validated elsewhere in this exact codebase:
+# engine/strike_selector/selector.py's own MAX_SPREAD_PCT constant
+# (used in its soft _liquidity_fit_score scoring) has used 3.0% as its
+# reference ceiling. 2.0% here is intentionally a bit stricter than
+# that existing 3.0% soft-scoring reference, since this is a hard gate
+# (block entirely) rather than a soft penalty (reduce one score
+# component) — not a blind guess, but still worth you reviewing against
+# your own fill experience and adjusting if it rejects too often/rarely.
+DEFAULT_ENTRY_GATES = {
+    "enabled": True,
+    "liquidity": {
+        "enabled": True,
+        "min_volume": None,   # contracts traded today on this strike — set after reviewing real data
+        "min_oi": None,       # open interest on this strike — set after reviewing real data
+    },
+    "spread": {
+        "enabled": True,
+        "max_spread_pct": 2.0,  # % of mid price (ask-bid)/mid*100 — see note above
+    },
+    "volatility": {
+        "enabled": True,
+        "max_realized_vol_pct": None,  # annualized % from compute_realized_vol — set after reviewing real data
+    },
+}
+ENTRY_GATES = dict(DEFAULT_ENTRY_GATES)
+_persisted_entry_gates = load_setting("entry_gates")
+if _persisted_entry_gates:
+    ENTRY_GATES.update(_persisted_entry_gates)
+# Ensure any NEW keys added to DEFAULT_ENTRY_GATES since a person's last
+# save are present even for a persisted config saved before those keys
+# existed — same pattern as ACCOUNT_CONFIG's own backfill below.
+for _k, _v in DEFAULT_ENTRY_GATES.items():
+    if _k not in ENTRY_GATES:
+        ENTRY_GATES[_k] = _v
+
+
+def get_entry_gates_config() -> dict:
+    return dict(ENTRY_GATES)
+
+
+def update_entry_gates_config(updates: dict) -> dict:
+    """
+    Shallow-merges top-level keys normally, but deep-merges the three
+    known sub-dicts (liquidity/spread/volatility) so updating e.g. just
+    {"spread": {"max_spread_pct": 1.5}} doesn't silently wipe out that
+    sub-dict's other keys (enabled, etc.) the way a plain top-level
+    overwrite would.
+    """
+    for key, value in updates.items():
+        if key in ("liquidity", "spread", "volatility") and isinstance(value, dict) and isinstance(ENTRY_GATES.get(key), dict):
+            ENTRY_GATES[key] = {**ENTRY_GATES[key], **value}
+        else:
+            ENTRY_GATES[key] = value
+    save_setting("entry_gates", ENTRY_GATES)
+    return get_entry_gates_config()
 
 _persisted_account_config = load_setting("account_config")
 if _persisted_account_config:

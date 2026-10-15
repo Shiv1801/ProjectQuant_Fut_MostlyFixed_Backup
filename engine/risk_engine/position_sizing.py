@@ -85,10 +85,18 @@ def compute_position_size(available_capital: float, index_id: str, premium_per_s
         return {"lots": 0, "reason": "zero max loss per share"}
 
     max_shares = risk_amount / max_loss_per_share
-    lots = int(max_shares // lot_size)
+    risk_based_lots = int(max_shares // lot_size)
 
+    # Minimum 1 lot for every approved trade, provided the account
+    # can afford the full premium cost of 1 lot.
+    lots = max(1, risk_based_lots)
+
+    # Never exceed available capital.
+    # If even 1 lot is unaffordable, no trade is possible.
     while lots > 0 and (lots * lot_size * premium_per_share) > available_capital:
         lots -= 1
+	
+  
 
     capital_required = lots * lot_size * premium_per_share
     capital_required_pct = (capital_required / available_capital * 100) if available_capital > 0 else 0

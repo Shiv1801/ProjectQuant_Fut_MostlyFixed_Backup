@@ -1,0 +1,11 @@
+﻿check,value,status
+shadow_log_rows,93,INFO
+unique_nonblank_timestamps,93,INFO
+duplicate_timestamp_rows,0,PASS
+scored_forecasts,63,PASS
+pending_forecasts,30,INFO
+invalid_forecasts,0,PASS
+database_access,SQLite URI mode=ro; source=live only,PASS
+evaluation_target,"sample standard deviation of next 30 one-minute log returns, annualized as historical harness",INFO
+evaluated_at_local,2026-10-13T15:05:49,INFO
+production_changed,No,PASS

@@ -39,7 +39,7 @@ SIDE_SELL = -1
 
 def place_live_entry_order(access_token: str, index_id: str, fyers_symbol: str,
                             qty: int, direction: str, strike: float, option_type: str,
-                            lots: int, lot_size: int) -> dict:
+                            lots: int, lot_size: int, side: int = SIDE_BUY) -> dict:
     """
     Places a REAL market buy order for one option contract. qty must
     already be lots * lot_size (the actual number of units to buy, not
@@ -60,7 +60,7 @@ def place_live_entry_order(access_token: str, index_id: str, fyers_symbol: str,
         "symbol": fyers_symbol,
         "qty": qty,
         "type": ORDER_TYPE_MARKET,
-        "side": SIDE_BUY,
+        "side": side,
         "productType": PRODUCT_TYPE,
         "limitPrice": 0,
         "stopPrice": 0,
@@ -71,7 +71,7 @@ def place_live_entry_order(access_token: str, index_id: str, fyers_symbol: str,
 
     log_trade_action(
         0, index_id, "entry_submitted",
-        f"LIVE | {direction} | strike={strike} {option_type} | lots={lots} | symbol={fyers_symbol} | qty={qty}",
+        f"LIVE | {direction} | strike={strike} {option_type} | side={"BUY" if side == SIDE_BUY else "SELL"} | lots={lots} | symbol={fyers_symbol} | qty={qty}",
     )
 
     try:

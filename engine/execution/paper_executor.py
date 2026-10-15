@@ -65,7 +65,8 @@ def market_minutes_between(start: datetime, end: datetime) -> float:
     return round(total_minutes, 2)
 
 
-def execute_paper_entry(index_id: str, direction: str, selected_strike: dict, lots: int, lot_size: int) -> dict:
+def execute_paper_entry(index_id: str, direction: str, selected_strike: dict, lots: int, lot_size: int,
+                         quant_confidence: float | None = None) -> dict:
     """
     Opens a new paper position from a fired signal + chosen strike + sized
     lots. Does not touch Fyers (paper mode never places real orders) —
@@ -74,6 +75,13 @@ def execute_paper_entry(index_id: str, direction: str, selected_strike: dict, lo
     This is called UNCONDITIONALLY by the auto-entry loop regardless of
     the configured trading mode (paper/live/both) — paper tracking is
     always maintained as the permanent baseline record, per design.
+
+    quant_confidence (added 2026-09-30, alongside Group G): the combined
+    Leg-1 confidence score (which now includes Group G's vote when
+    active) that this trade actually fired at, threaded down from
+    auto_entry_loop -> position_size_signal -> strike_selector_signal ->
+    confluence_signal. Optional/None for any caller that doesn't have it
+    (e.g. a manual/test entry) -- never fabricated.
     """
     entry_price = selected_strike.get("ltp")
     if not entry_price or entry_price <= 0:
@@ -232,6 +240,7 @@ def monitor_and_close_positions(get_chain_fn, get_index_risk_params_fn=None,
                     entry_price=position["entry_price"], entry_time=position["entry_time"], exit_price=last_known_price,
                     exit_time=now.isoformat(), exit_reason="strike_out_of_scope", pnl=pnl, pnl_pct=pnl_pct,
                     hold_minutes=hold_minutes, mode=position["mode"],
+                    quant_confidence=position.get("quant_confidence"),
                 )
                 actions_taken.append({
                     "position_id": position["id"], "action": "closed", "reason": "strike_out_of_scope",
@@ -319,6 +328,7 @@ def monitor_and_close_positions(get_chain_fn, get_index_risk_params_fn=None,
                 entry_price=entry_price, entry_time=position["entry_time"], exit_price=current_price,
                 exit_time=now.isoformat(), exit_reason=exit_reason, pnl=pnl, pnl_pct=pnl_pct,
                 hold_minutes=hold_minutes, mode=position["mode"],
+                quant_confidence=position.get("quant_confidence"),
             )
 
             actions_taken.append({

@@ -40,7 +40,7 @@ def is_live_trading_active_for(index_id: str) -> bool:
 
 def execute_entry(access_token: str, index_id: str, fyers_symbol: str, direction: str,
                    strike: float, option_type: str, lots: int, lot_size: int,
-                   simulated_or_live_price: float) -> dict:
+                   simulated_or_live_price: float, quant_confidence: float | None = None) -> dict:
     """
     The single real entry point every part of this app should call to
     open a position — decides paper vs. live internally, so callers
