@@ -9,13 +9,20 @@ SAMPLE_CANDLES = [
 
 
 def test_rejects_below_quant_threshold():
-    result = evaluate_confluence("NIFTY50", quant_confidence=0.4, quant_direction="long_call",
-                                  candles_1min=SAMPLE_CANDLES, min_confidence_threshold=0.62)
-    assert result.fired is False
-    assert result.veto_reason == "quant_below_threshold"
+    result = evaluate_confluence(
+        {"confidence": 0.4, "direction": "long_call"},
+        {"verdict": "confirmed", "confirmed": True},
+        min_confidence_threshold=0.62,
+    )
+    assert result["fired"] is False
+    assert result["veto_reason"] == "quant_below_threshold"
 
 
 def test_fires_when_both_legs_agree():
-    result = evaluate_confluence("NIFTY50", quant_confidence=0.75, quant_direction="long_call",
-                                  candles_1min=SAMPLE_CANDLES, min_confidence_threshold=0.62)
-    assert isinstance(result.fired, bool)  # exact outcome depends on chart_structure logic
+    result = evaluate_confluence(
+        {"confidence": 0.75, "direction": "long_call"},
+        {"verdict": "confirmed", "confirmed": True},
+        min_confidence_threshold=0.62,
+    )
+    assert result["fired"] is True
+    assert result["direction"] == "long_call"

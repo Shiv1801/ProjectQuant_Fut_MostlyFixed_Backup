@@ -48,6 +48,11 @@ DEFAULT_RISK_PARAMS = {
     # recorded, not silently overridden, and the toggle remains
     # available to turn back off from Positions & Risk at any time.
     "require_vwap": True,
+    # VRP has an existing PRD formula and 2.0 percentage-point threshold, but
+    # its incremental trade-quality benefit is not yet walk-forward validated.
+    # Keep the production gate opt-in until that validation is complete.
+    "require_vrp": False,
+    "vrp_buy_threshold_pct": 2.0,
     # Leg 2 of the confluence gate (chart structure). Previously
     # hardcoded as mandatory with no way to turn it off; now toggleable
     # from Positions & Risk exactly like require_vwap above. Defaults
@@ -55,6 +60,7 @@ DEFAULT_RISK_PARAMS = {
     # AND require_vwap off) is a much looser gate and should be an
     # explicit, deliberate choice, not the default.
     "require_chart_confirmation": True,
+    "require_futures_ofi": False,
 }
 
 # Per-index defaults — same PRD baseline for all three initially; each

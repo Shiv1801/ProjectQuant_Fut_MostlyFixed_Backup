@@ -14,14 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import asyncio
 from loguru import logger
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import math
 
 from config.db import (
     init_db, insert_ping, get_recent_pings,
     insert_tick, get_recent_ticks, get_tick_count,
-    get_recent_candles, get_candle_count, insert_historical_candles,
+    get_recent_candles, get_continuous_futures_candles, get_futures_candle_count, get_candle_count, insert_historical_candles,
     insert_atm_iv_snapshot, get_iv_history, get_iv_history_count,
     get_open_positions, get_trade_log, get_trade_log_stats, get_trade_log_detailed_stats, clear_trade_history,
     insert_backtest_run, get_backtest_runs, mark_backtest_run_applied,
@@ -34,7 +34,7 @@ from engine.execution.trade_dispatcher import execute_exit, execute_entry, is_li
 from engine.data_layer.fyers_client.auth import get_fyers_model, generate_auth_url, exchange_auth_code_for_token
 from engine.data_layer.fyers_client.rest_client import get_historical_candles
 from engine.data_layer.historical_backfill import backfill_index, backfill_index_extended
-from engine.shared_state.store import shared_state
+from engine.shared_state.store import shared_state, now_ist_iso
 from engine.background.pollers import start_background_pollers, start_position_monitor, start_auto_entry_loop, start_candle_volume_enrichment, start_option_chain_history_loop, SYMBOLS, CHAIN_INDICES
 
 from engine.signal_layer.volatility.realized_vol import compute_realized_vol
@@ -58,6 +58,7 @@ from engine.signal_layer.position_sizing.vol_scaled import compute_vol_scaled_si
 from engine.confluence_gate.quant_score import compute_quant_confidence
 from engine.confluence_gate.chart_structure import confirm_chart_structure
 from engine.confluence_gate.gate import evaluate_confluence
+from engine.confluence_gate.direction import validate_directional_candidate
 from engine.strike_selector.selector import select_best_strike
 from engine.risk_engine.position_sizing import compute_position_size, LOT_SIZES, get_effective_capital
 from engine.risk_engine.stops import check_hard_stop_loss, update_trailing_stop
@@ -72,7 +73,8 @@ from engine.backtest.engine import run_backtest
 from engine.backtest.engine_bs import run_backtest_bs
 
 app = FastAPI(title="Project Trade API", version="0.3.0")
-_SERVER_START_TIME = datetime.utcnow().isoformat()  # lets /health prove a fresh restart actually happened
+_SERVER_START_TIME = now_ist_iso()  # lets /health prove a fresh restart actually happened
+_LAST_CONFLUENCE_EVALUATION: dict | None = None
 
 # Serves the frontend from the SAME origin as the API (2026-09-25 fix).
 # Previously the person opened frontend/index.html directly via a
@@ -144,6 +146,20 @@ def _read_token() -> str | None:
     return TOKEN_PATH.read_text().strip()
 
 
+def _get_analysis_candles(index_id: str, limit: int = 60) -> list[dict]:
+    """Return the canonical technical candle series for an index.
+
+    NIFTY50 technical analysis uses an expiry-aware continuous futures series.
+    Options and India VIX remain separate instrument data sources. No spot
+    fallback is used when the futures contract or its candles are unavailable.
+    """
+    index_id = index_id.upper()
+    if index_id != "NIFTY50":
+        return get_recent_candles(index_id, limit=limit)
+
+    return get_continuous_futures_candles(limit=limit)
+
+
 @app.on_event("startup")
 def on_startup():
     init_db()
@@ -158,7 +174,6 @@ def on_startup():
     # confluence gate's require_vwap handling, model_scores logging)
     # was already correctly wired to use it. No new loop design, no new
     # Fyers endpoint -- this just starts the loop that was already written.
-    start_candle_volume_enrichment()
     # Added 2026-10-12, per explicit request: starts accumulating REAL
     # historical option-chain data (bid/ask/OI/volume/Greeks) going
     # forward, ahead of any strike-selector scoring upgrade -- see
@@ -189,7 +204,7 @@ async def health():
 
 @app.get("/db-check")
 async def db_check():
-    insert_ping(f"ping at {datetime.utcnow().isoformat()}")
+    insert_ping(f"ping at {now_ist_iso()}")
     recent = get_recent_pings(limit=5)
     return {"status": "ok", "recent_pings": recent}
 
@@ -217,14 +232,13 @@ async def auth_status():
     if not TOKEN_PATH.exists():
         return {"status": "ok", "has_token": False, "token_age_hours": None}
 
-    IST_OFFSET_HOURS = 5.5
-    now_ist = datetime.utcnow() + timedelta(hours=IST_OFFSET_HOURS)
+    now_ist = datetime.fromisoformat(now_ist_iso())
     most_recent_8am_ist = now_ist.replace(hour=8, minute=0, second=0, microsecond=0)
     if now_ist < most_recent_8am_ist:
         most_recent_8am_ist -= timedelta(days=1)
 
-    mtime_utc = datetime.utcfromtimestamp(TOKEN_PATH.stat().st_mtime)
-    mtime_ist = mtime_utc + timedelta(hours=IST_OFFSET_HOURS)
+    mtime_utc = datetime.fromtimestamp(TOKEN_PATH.stat().st_mtime, tz=timezone.utc)
+    mtime_ist = mtime_utc.astimezone(now_ist.tzinfo)
 
     age_hours = round((now_ist - mtime_ist).total_seconds() / 3600, 1)
     is_stale = mtime_ist < most_recent_8am_ist
@@ -278,6 +292,21 @@ async def market_all():
     if not shared_state.prices:
         return {"status": "error", "message": "No price data yet — waiting for background poller (needs a valid token)."}
     return {"status": "ok", "data": shared_state.prices, "fetched_at": shared_state.prices_updated_at}
+
+
+@app.get("/market/futures")
+async def market_futures():
+    current_status = shared_state.futures_data_status.get("current_month", {})
+    return {
+        "status": "ok",
+        "contracts": list(shared_state.futures_contracts),
+        "quotes": {
+            role: shared_state.get_futures_quote(role)
+            for role in ("current_month", "next_month")
+        },
+        "response_at": now_ist_iso(),
+        "market_status": current_status.get("fields", {}).get("market"),
+    }
 
 
 @app.get("/ticks/{index_id}")
@@ -362,8 +391,12 @@ async def option_chain(index: str = "NIFTY50"):
 
 @app.get("/candles/{index_id}")
 async def candles_for_index(index_id: str, limit: int = 60):
-    rows = get_recent_candles(index_id.upper(), limit=limit)
-    return {"status": "ok", "index_id": index_id.upper(), "count": len(rows), "candles": rows}
+    rows = _get_analysis_candles(index_id.upper(), limit=limit)
+    return {
+        "status": "ok", "index_id": index_id.upper(), "count": len(rows), "candles": rows,
+        "latest_candle_timestamp": rows[-1].get("candle_timestamp") if rows else None,
+        "response_at": now_ist_iso(),
+    }
 
 
 @app.get("/backfill/all")
@@ -382,13 +415,13 @@ async def backfill_all(days: int = 30):
             rest_client_fn=get_historical_candles, access_token=token, fyers_symbol=fyers_symbol,
             index_id=index_id, days_back=days, db_insert_fn=insert_historical_candles,
         )
-    return {"status": "ok", "results": results, "completed_at": datetime.utcnow().isoformat()}
+    return {"status": "ok", "results": results, "completed_at": now_ist_iso()}
 
 
 @app.get("/candles/count/all")
 async def candle_count_all():
     counts = {label: get_candle_count(label) for label in SYMBOLS if label != "INDIAVIX"}
-    return {"status": "ok", "counts": counts}
+    return {"status": "ok", "counts": counts, "futures": get_futures_candle_count(), "response_at": now_ist_iso()}
 
 
 @app.get("/backfill/{index_id}")
@@ -448,20 +481,20 @@ async def candle_count(index_id: str):
 
 @app.get("/signals/realized-vol/{index_id}")
 async def realized_vol_signal(index_id: str, window: int = 30):
-    candles = get_recent_candles(index_id.upper(), limit=window)
+    candles = _get_analysis_candles(index_id.upper(), limit=window)
     closes = [c["close"] for c in candles if c["close"] is not None]
     result = compute_realized_vol(closes)
     return {"status": "ok", "index_id": index_id.upper(), "model_id": "realized_vol_multiwindow", "group": "A",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/garch-vol/{index_id}")
 async def garch_vol_signal(index_id: str, window: int = 100):
-    candles = get_recent_candles(index_id.upper(), limit=window)
+    candles = _get_analysis_candles(index_id.upper(), limit=window)
     closes = [c["close"] for c in candles if c["close"] is not None]
     result = compute_garch_forecast(closes)
     return {"status": "ok", "index_id": index_id.upper(), "model_id": "garch_1_1", "group": "A",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 # ---------------- Group B — now reads shared_state chain, zero Fyers calls ----------------
@@ -470,13 +503,13 @@ def _parse_expiry_epoch(expiry_raw):
     if expiry_raw is None:
         return None
     try:
-        return datetime.utcfromtimestamp(int(expiry_raw))
+        return datetime.fromtimestamp(int(expiry_raw), tz=timezone.utc)
     except (ValueError, TypeError, OSError):
         return None
 
 
 @app.get("/signals/vrp/{index_id}")
-async def vrp_signal(index_id: str):
+async def vrp_signal(index_id: str, persist: bool = True):
     index_id = index_id.upper()
     if index_id not in CHAIN_INDICES:
         return {"status": "error", "message": f"'{index_id}' is not a valid VRP target."}
@@ -498,9 +531,10 @@ async def vrp_signal(index_id: str):
     if atm_iv_pct is None:
         return {"status": "error", "message": "No IV available for ATM strike."}
 
-    insert_atm_iv_snapshot(index_id, atm_strike, atm_iv_pct)
+    if persist:
+        insert_atm_iv_snapshot(index_id, atm_strike, atm_iv_pct)
 
-    candles = get_recent_candles(index_id, limit=100)
+    candles = _get_analysis_candles(index_id, limit=100)
     closes = [c["close"] for c in candles if c["close"] is not None]
     garch_result = compute_garch_forecast(closes)
     garch_forecast_pct = garch_result.get("garch_forecast_vol_pct")
@@ -508,13 +542,13 @@ async def vrp_signal(index_id: str):
     vrp_result = compute_vrp(atm_iv_pct, garch_forecast_pct)
 
     expiry_dts = [d for d in (_parse_expiry_epoch(e.get("expiry")) for e in parsed["expiry_data"]) if d is not None]
-    days_to_expiry = round((min(expiry_dts) - datetime.utcnow()).total_seconds() / 86400, 1) if expiry_dts else None
+    days_to_expiry = round((min(expiry_dts) - datetime.now(timezone.utc)).total_seconds() / 86400, 1) if expiry_dts else None
 
     return {
         "status": "ok", "index_id": index_id, "model_id": "variance_risk_premium", "group": "B",
         "spot": spot, "atm_strike": atm_strike, "atm_ce_ltp": atm_ce.get("ltp"),
         "atm_greeks": atm_ce, "time_to_expiry_days": days_to_expiry,
-        **vrp_result, "computed_at": datetime.utcnow().isoformat(),
+        **vrp_result, "computed_at": now_ist_iso(),
     }
 
 
@@ -526,7 +560,7 @@ async def iv_rank_signal(index_id: str):
     current_iv = historical_ivs[-1] if historical_ivs else None
     result = compute_iv_rank(current_iv, historical_ivs[:-1] if historical_ivs else [])
     return {"status": "ok", "index_id": index_id, "model_id": "iv_rank_percentile", "group": "B",
-            "current_iv_pct": current_iv, **result, "computed_at": datetime.utcnow().isoformat()}
+            "current_iv_pct": current_iv, **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/iv-history/count/{index_id}")
@@ -538,37 +572,57 @@ async def iv_history_count(index_id: str):
 
 @app.get("/signals/hurst/{index_id}")
 async def hurst_signal(index_id: str, window: int = 100):
-    candles = get_recent_candles(index_id.upper(), limit=window)
+    candles = _get_analysis_candles(index_id.upper(), limit=window)
     closes = [c["close"] for c in candles if c["close"] is not None]
     result = compute_hurst_exponent(closes)
     return {"status": "ok", "index_id": index_id.upper(), "model_id": "hurst_exponent", "group": "C",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/zscore/{index_id}")
 async def zscore_signal(index_id: str, window: int = 20):
-    candles = get_recent_candles(index_id.upper(), limit=window)
+    candles = _get_analysis_candles(index_id.upper(), limit=window)
     closes = [c["close"] for c in candles if c["close"] is not None]
     result = compute_zscore(closes, window=window)
     return {"status": "ok", "index_id": index_id.upper(), "model_id": "zscore_price_deviation", "group": "C",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/variance-ratio/{index_id}")
 async def variance_ratio_signal(index_id: str, window: int = 150, q: int = 5):
-    candles = get_recent_candles(index_id.upper(), limit=window)
+    candles = _get_analysis_candles(index_id.upper(), limit=window)
     closes = [c["close"] for c in candles if c["close"] is not None]
     result = compute_variance_ratio(closes, q=q)
     return {"status": "ok", "index_id": index_id.upper(), "model_id": "autocorrelation_variance_ratio", "group": "C",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
+
+
+def _annotate_ofi_freshness(result: dict, source_timestamp: str | None, max_age_seconds: float = 15.0) -> dict:
+    """Attach provider/shared-state timestamp freshness to a spot OFI result."""
+    result = dict(result)
+    result["source_timestamp"] = source_timestamp
+    try:
+        parsed = datetime.fromisoformat(str(source_timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+        result["age_seconds"] = round(age, 2)
+        result["fresh"] = -2 <= age <= max_age_seconds
+        if not result["fresh"]:
+            result["freshness_note"] = "depth timestamp is in the future or older than the allowed freshness window"
+    except (TypeError, ValueError):
+        result["age_seconds"] = None
+        result["fresh"] = False
+        result["freshness_note"] = "depth source timestamp missing or invalid"
+    return result
 
 
 @app.get("/signals/ofi/NIFTY50/futures")
 async def nifty_futures_ofi_signal():
-    """Diagnostic-only OFI for the nearest two NIFTY monthly futures.
+    """Contract-aware OFI for the nearest two NIFTY monthly futures.
 
     This endpoint reads shared state only. It makes no FYERS calls and
-    is not connected to the confluence or order-execution pipeline.
+    contributes to confluence only when both current and next books are valid.
     """
     from engine.shared_state.store import now_ist_iso
 
@@ -582,6 +636,7 @@ async def nifty_futures_ofi_signal():
         if not snapshot:
             contract_inputs.append({
                 "symbol": symbol,
+                "role": contract.get("role"),
                 "expiry": contract.get("expiry_utc"),
                 "updated_at": None,
                 "total_buy_qty": None,
@@ -595,8 +650,9 @@ async def nifty_futures_ofi_signal():
 
         contract_inputs.append({
             "symbol": symbol,
+            "role": contract.get("role"),
             "expiry": snapshot.get("expiry_utc") or contract.get("expiry_utc"),
-            "updated_at": snapshot.get("updated_at"),
+            "updated_at": snapshot.get("updated_at") or snapshot.get("observed_at"),
             "total_buy_qty": book.get("totalbuyqty"),
             "total_sell_qty": book.get("totalsellqty"),
             "error": shared_state.futures_depth_errors.get(symbol),
@@ -625,9 +681,24 @@ async def nifty_futures_ofi_signal():
         "computed_at": now_ist_iso(),
         "contracts_discovered": len(contract_metadata),
         "contracts_updated_at": shared_state.futures_contracts_updated_at,
+        "discovery": {
+            "status": shared_state.futures_discovery_status,
+            "updated_at": shared_state.futures_discovery_updated_at,
+            "error": shared_state.futures_discovery_error,
+            "last_known_contracts": shared_state.futures_contracts_last_known,
+        },
+        "data_status": shared_state.futures_data_status,
+        "latest_quotes": {
+            role: shared_state.get_futures_quote(role)
+            for role in ("current_month", "next_month")
+        },
+        "latest_candles": {
+            role: shared_state.get_futures_candles(role)[-1:]
+            for role in ("current_month", "next_month")
+        },
         "poller": poller_status,
-        "diagnostic_only": True,
-        "trading_integration": False,
+        "diagnostic_only": False,
+        "trading_integration": True,
     }
 
 
@@ -644,8 +715,9 @@ async def ofi_signal(index_id: str):
     total_sell = inner.get("totalsellqty")
 
     result = compute_ofi(total_buy, total_sell)
+    result = _annotate_ofi_freshness(result, shared_state.depth_updated_at.get(index_id))
     return {"status": "ok", "index_id": index_id, "model_id": "order_flow_imbalance", "group": "C",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 # ---------------- Group D — all read shared_state chain ----------------
@@ -658,7 +730,7 @@ async def gex_signal(index_id: str):
         return {"status": "error", "message": "No option chain data yet."}
     result = compute_gex(parsed["strikes"], parsed["spot"])
     return {"status": "ok", "index_id": index_id, "model_id": "gamma_exposure", "group": "D",
-            "spot": parsed["spot"], **result, "computed_at": datetime.utcnow().isoformat()}
+            "spot": parsed["spot"], **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/pcr/{index_id}")
@@ -669,7 +741,7 @@ async def pcr_signal(index_id: str):
         return {"status": "error", "message": "No option chain data yet."}
     result = compute_pcr(parsed["call_oi_total"], parsed["put_oi_total"])
     return {"status": "ok", "index_id": index_id, "model_id": "put_call_ratio_oi", "group": "D",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/max-pain/{index_id}")
@@ -680,7 +752,7 @@ async def max_pain_signal(index_id: str):
         return {"status": "error", "message": "No option chain data yet."}
     result = compute_max_pain(parsed["strikes"])
     return {"status": "ok", "index_id": index_id, "model_id": "max_pain", "group": "D",
-            "spot": parsed["spot"], **result, "computed_at": datetime.utcnow().isoformat()}
+            "spot": parsed["spot"], **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/oi-change/{index_id}")
@@ -691,7 +763,7 @@ async def oi_change_signal(index_id: str):
         return {"status": "error", "message": "No option chain data yet."}
     result = compute_oi_change_analysis(parsed["strikes"], top_n=5)
     return {"status": "ok", "index_id": index_id, "model_id": "oi_change_analysis", "group": "D",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 # ---------------- Group E ----------------
@@ -701,13 +773,13 @@ async def vix_regime_signal(window: int = 20):
     candles = get_recent_candles("INDIAVIX", limit=window)
     result = compute_vix_regime(candles)
     return {"status": "ok", "model_id": "vix_level_roc", "group": "E",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/rv-iv-ratio/{index_id}")
 async def rv_iv_ratio_signal(index_id: str):
     index_id = index_id.upper()
-    candles = get_recent_candles(index_id, limit=30)
+    candles = _get_analysis_candles(index_id, limit=30)
     closes = [c["close"] for c in candles if c["close"] is not None]
     rv_result = compute_realized_vol(closes)
     realized_vol_pct = rv_result.get("realized_vol_pct")
@@ -717,7 +789,7 @@ async def rv_iv_ratio_signal(index_id: str):
 
     result = compute_rv_iv_ratio(realized_vol_pct, implied_vol_pct)
     return {"status": "ok", "index_id": index_id, "model_id": "realized_implied_ratio", "group": "E",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/correlation-breakdown")
@@ -732,9 +804,11 @@ async def correlation_breakdown_signal(window: int = 20):
     """
     return {
         "status": "not_applicable", "model_id": "correlation_breakdown", "group": "E",
+        "availability_status": "DISABLED", "sample_count": 0,
+        "last_calculation_at": now_ist_iso(),
         "message": "Correlation Breakdown is disabled — this app trades NIFTY50 only, "
                     "and this model requires multiple indices to compare.",
-        "computed_at": datetime.utcnow().isoformat(),
+        "computed_at": now_ist_iso(),
     }
 
 
@@ -749,7 +823,7 @@ async def kelly_sizing_signal():
         trade_count=stats.get("trade_count", 0),
     )
     return {"status": "ok", "model_id": "fractional_kelly", "group": "F",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 @app.get("/signals/group-g-status")
@@ -779,14 +853,14 @@ async def group_g_status_signal(index_id: str | None = None):
         "model_beats_baseline": result.get("model_beats_baseline"),
         "model_trained_at": result.get("model_trained_at"),
         "note": result.get("note"),
-        "computed_at": datetime.utcnow().isoformat(),
+        "computed_at": now_ist_iso(),
     }
 
 
 @app.get("/signals/vol-scaled-sizing/{index_id}")
 async def vol_scaled_sizing_signal(index_id: str, base_size: float = 100000, window: int = 30):
     index_id = index_id.upper()
-    candles = get_recent_candles(index_id, limit=200)
+    candles = _get_analysis_candles(index_id, limit=200)
     closes = [c["close"] for c in candles if c["close"] is not None]
 
     current_result = compute_realized_vol(closes[-window:] if len(closes) >= window else closes)
@@ -797,7 +871,7 @@ async def vol_scaled_sizing_signal(index_id: str, base_size: float = 100000, win
 
     result = compute_vol_scaled_size(base_size, current_vol, reference_vol)
     return {"status": "ok", "index_id": index_id, "model_id": "vol_scaled_sizing", "group": "F",
-            **result, "computed_at": datetime.utcnow().isoformat()}
+            **result, "computed_at": now_ist_iso()}
 
 
 # ---------------- Confluence Gate ----------------
@@ -855,12 +929,20 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
     transparency into all legs.
     """
     index_id = index_id.upper()
+    evaluation_id = now_ist_iso()
 
-    candles = get_recent_candles(index_id, limit=100)
+    candles = _get_analysis_candles(index_id, limit=100)
     closes = [c["close"] for c in candles if c["close"] is not None]
+    candle_source_timestamp = candles[-1].get("candle_timestamp") if candles else None
+    option_chain_source_timestamp = shared_state.option_chains_updated_at.get(index_id)
+    depth_source_timestamp = shared_state.depth_updated_at.get(index_id)
 
     hurst_result = compute_hurst_exponent(closes)
     zscore_result = compute_zscore(closes, window=20)
+    for result in (hurst_result, zscore_result):
+        result["computed_at"] = evaluation_id
+        result["evaluation_id"] = evaluation_id
+        result["source_timestamp"] = candle_source_timestamp
 
     depth_data = shared_state.get_depth(index_id)
     ofi_result = {"ofi": None}
@@ -868,11 +950,20 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
         fyers_symbol = SYMBOLS.get(index_id)
         inner = (depth_data.get("d") or {}).get(fyers_symbol, {})
         ofi_result = compute_ofi(inner.get("totalbuyqty"), inner.get("totalsellqty"))
+        ofi_result = _annotate_ofi_freshness(ofi_result, depth_source_timestamp)
+        ofi_result["computed_at"] = evaluation_id
+        ofi_result["evaluation_id"] = evaluation_id
 
     parsed_chain = _parse_chain_from_shared_state(index_id) if index_id in CHAIN_INDICES else None
     pcr_result = {"pcr": None}
     max_pain_result = {"max_pain_strike": None}
     oi_change_result = {"top_oi_builds": []}
+    variance_ratio_result = compute_variance_ratio(closes, q=5)
+    variance_ratio_result["computed_at"] = evaluation_id
+    variance_ratio_result["evaluation_id"] = evaluation_id
+    variance_ratio_result["source_timestamp"] = candle_source_timestamp
+    vrp_result = {"status": "unavailable", "vrp_pct": None,
+                  "favorable": None, "note": "option-chain inputs unavailable"}
     spot = None
     if parsed_chain:
         pcr_result = compute_pcr(parsed_chain["call_oi_total"], parsed_chain["put_oi_total"])
@@ -885,6 +976,28 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
         max_pain_result = compute_max_pain(parsed_chain["strikes"])
         oi_change_result = compute_oi_change_analysis(parsed_chain["strikes"], top_n=5)
         spot = parsed_chain["spot"]
+        vrp_result = await vrp_signal(index_id, persist=False)
+        if vrp_result.get("status") != "ok":
+            vrp_result = {
+                "status": "unavailable", "vrp_pct": None, "favorable": None,
+                "note": vrp_result.get("message", "VRP inputs unavailable"),
+            }
+        vrp_result["evaluation_id"] = evaluation_id
+        vrp_result["source_timestamp"] = option_chain_source_timestamp
+
+        for result in (pcr_result, max_pain_result, oi_change_result):
+            result["computed_at"] = evaluation_id
+            result["evaluation_id"] = evaluation_id
+            result["source_timestamp"] = option_chain_source_timestamp
+
+    for result in (pcr_result, max_pain_result, oi_change_result, vrp_result):
+        result.setdefault("computed_at", evaluation_id)
+        result["evaluation_id"] = evaluation_id
+        result.setdefault("source_timestamp", option_chain_source_timestamp)
+
+    futures_ofi_result = await nifty_futures_ofi_signal()
+    futures_ofi_result["evaluation_id"] = evaluation_id
+    futures_ofi_result["source_timestamp"] = futures_ofi_result.get("contracts_updated_at")
 
     # Group G (added 2026-09-30): computed from the SAME A-F outputs
     # already gathered above (flattened the identical way training data
@@ -897,18 +1010,21 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
     # load) so it's safe to run on every evaluation, not just when active.
     linked_trade_count = get_model_scores_count(only_linked=True)
     pre_group_g_features = _flatten_model_outputs_for_logging(
-        {"hurst": hurst_result, "zscore": zscore_result, "ofi": ofi_result, "pcr": pcr_result,
-         "max_pain": max_pain_result, "oi_change": oi_change_result, "spot": spot},
+        {"hurst": hurst_result, "zscore": zscore_result, "variance_ratio": variance_ratio_result,
+         "ofi": ofi_result, "futures_ofi": futures_ofi_result, "pcr": pcr_result,
+         "max_pain": max_pain_result, "oi_change": oi_change_result, "vrp": vrp_result,
+         "spot": spot},
         quant_result=None,
     )
     group_g_result = compute_group_g_score(pre_group_g_features, linked_trade_count)
 
     model_outputs = {
-        "hurst": hurst_result, "zscore": zscore_result, "ofi": ofi_result, "pcr": pcr_result,
-        "max_pain": max_pain_result, "oi_change": oi_change_result, "spot": spot,
+        "hurst": hurst_result, "zscore": zscore_result, "variance_ratio": variance_ratio_result,
+        "ofi": ofi_result, "futures_ofi": futures_ofi_result, "pcr": pcr_result,
+        "max_pain": max_pain_result, "oi_change": oi_change_result, "vrp": vrp_result, "spot": spot,
         "group_g": group_g_result,
     }
-    quant_result = compute_quant_confidence(model_outputs)
+    quant_result = compute_quant_confidence(model_outputs, evaluation_id=evaluation_id)
 
     chart_result = {"verdict": "no_quant_direction", "confirmed": False}
     if quant_result.get("direction"):
@@ -917,6 +1033,10 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
     index_config = get_index_config(index_id)
     require_vwap = index_config["risk_params"].get("require_vwap", False) if index_config else False
     require_chart = index_config["risk_params"].get("require_chart_confirmation", True) if index_config else True
+    require_vrp = index_config["risk_params"].get("require_vrp", False) if index_config else False
+    require_futures_ofi = index_config["risk_params"].get("require_futures_ofi", False) if index_config else False
+    # Optional generic OFI gate: accepts either valid spot or valid futures OFI.
+    require_ofi = index_config["risk_params"].get("require_ofi", False) if index_config else False
 
     # FIXED A REAL, CONFIRMED BUG (2026-09-25): this endpoint's
     # min_confidence parameter defaulted to a hardcoded 0.5 and was
@@ -949,6 +1069,9 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
     gate_result = evaluate_confluence(
         quant_result, chart_result, min_confidence_threshold=min_confidence,
         vwap_result=vwap_result, require_vwap=require_vwap, require_chart=require_chart,
+        vrp_result=vrp_result, require_vrp=require_vrp,
+        futures_ofi_result=futures_ofi_result, require_futures_ofi=require_futures_ofi,
+        ofi_result=ofi_result, require_ofi=require_ofi,
     )
 
     # Group G training-data logging (added 2026-09-30): records EVERY
@@ -971,13 +1094,25 @@ async def confluence_signal(index_id: str, min_confidence: float | None = None):
             chart_confirmed=gate_result.get("chart_confirmed"),
             vwap_confirmed=gate_result.get("vwap_confirmed"),
             feature_vector=feature_vector,
+            evaluation_id=evaluation_id,
         )
     except Exception as e:
         logger.warning(f"confluence_signal: model_scores logging failed for {index_id}: {e}")
 
+    global _LAST_CONFLUENCE_EVALUATION
+    _LAST_CONFLUENCE_EVALUATION = {
+        "evaluation_id": evaluation_id,
+        "index_id": index_id,
+        "model_outputs": model_outputs,
+        "quant_result": quant_result,
+        "gate_result": gate_result,
+    }
     return {
         "status": "ok", "index_id": index_id, "model_id": "confluence_gate",
-        **gate_result, "computed_at": datetime.utcnow().isoformat(),
+        **gate_result, "computed_at": evaluation_id,
+        "evaluation_id": evaluation_id,
+        "quant_result": quant_result,
+        "model_outputs": model_outputs,
     }
 
 
@@ -1096,8 +1231,7 @@ def _minute_bucket_to_date(minute_bucket: str):
 
 
 def _now_ist():
-    IST_OFFSET_HOURS = 5.5
-    return datetime.utcnow() + timedelta(hours=IST_OFFSET_HOURS)
+    return datetime.fromisoformat(now_ist_iso())
 
 
 # ---------------- Strike Selector ----------------
@@ -1113,16 +1247,23 @@ async def strike_selector_signal(index_id: str, direction: str = None, min_confi
     if index_id not in CHAIN_INDICES:
         return {"status": "error", "message": f"'{index_id}' has no option chain to select from."}
 
-    gate_response = None
-    if not direction:
-        gate_response = await confluence_signal(index_id, min_confidence=min_confidence)
-        if not gate_response.get("fired"):
-            return {
-                "status": "ok", "index_id": index_id, "model_id": "strike_selector",
-                "selected": None, "note": f"confluence gate has not fired (veto_reason={gate_response.get('veto_reason')}) — no direction to select a strike for",
-                "computed_at": datetime.utcnow().isoformat(),
-            }
-        direction = gate_response["direction"]
+    requested_direction = direction
+    gate_response = await confluence_signal(index_id, min_confidence=min_confidence)
+    if not gate_response.get("fired"):
+        return {
+            "status": "ok", "index_id": index_id, "model_id": "strike_selector",
+            "selected": None, "note": f"confluence gate has not fired (veto_reason={gate_response.get('veto_reason')}) — no direction to select a strike for",
+            "computed_at": now_ist_iso(),
+        }
+    direction = gate_response["direction"]
+    if requested_direction is not None and requested_direction != direction:
+        return {
+            "status": "error", "index_id": index_id, "model_id": "strike_selector",
+            "selected": None, "direction": direction,
+            "message": "requested direction conflicts with the authoritative quant direction",
+            "requested_direction": requested_direction,
+            "computed_at": now_ist_iso(),
+        }
 
     if direction not in ("long_call", "long_put"):
         return {"status": "error", "message": f"Invalid direction: {direction}"}
@@ -1139,23 +1280,36 @@ async def strike_selector_signal(index_id: str, direction: str = None, min_confi
 
     result = select_best_strike(parsed_chain["strikes"], direction, iv_rank=iv_rank)
 
-    # Carries the gate's confidence scores through to the caller (added
-    # 2026-09-30, alongside Group G) -- these were previously computed in
-    # confluence_signal and then DISCARDED once fired/direction was
-    # extracted, meaning downstream code (position_size_signal, then
-    # auto_entry_loop -> execute_paper_entry) had no way to record what
-    # confidence a trade actually fired at. Only populated when this
-    # function itself ran the gate (gate_response is not None) -- when a
-    # caller passes an explicit `direction` and skips the gate, there's no
-    # real quant_confidence for this call to report, and None here means
-    # exactly that, not a lost value.
-    quant_confidence = gate_response.get("quant_confidence") if gate_response else None
+    # The gate is always evaluated, including when a caller supplies a
+    # requested direction. This keeps the selector from bypassing the
+    # authoritative quant direction.
+    quant_confidence = gate_response.get("quant_confidence")
+    selected_candidate = result.get("selected")
+    directional_validation = validate_directional_candidate(
+        direction, selected_candidate.get("option_type") if selected_candidate else None
+    )
+    if selected_candidate and not directional_validation["valid"]:
+        return {
+            "status": "error", "index_id": index_id, "model_id": "strike_selector",
+            "selected": None, "direction": direction,
+            "message": directional_validation["reason"],
+            "directional_validation": directional_validation,
+            "computed_at": now_ist_iso(),
+        }
 
     return {
         "status": "ok", "index_id": index_id, "model_id": "strike_selector",
         "direction": direction, "spot": parsed_chain["spot"],
         "quant_confidence": quant_confidence,
-        **result, "computed_at": datetime.utcnow().isoformat(),
+        "directional_validation": directional_validation,
+        # Preserve authorization derived from the authoritative confluence gate.
+        "authorization": {
+            "fired": gate_response.get("fired") is True,
+            "direction": direction,
+            "index_id": index_id,
+            "quant_confidence": quant_confidence,
+        },
+        **result, "computed_at": now_ist_iso(),
     }
 
 
@@ -1202,7 +1356,7 @@ async def position_size_signal(index_id: str, available_capital: float | None = 
         return {
             "status": "ok", "index_id": index_id, "model_id": "position_sizing",
             "lots": 0, "note": strike_response.get("note") or "no strike selected (gate likely hasn't fired)",
-            "computed_at": datetime.utcnow().isoformat(),
+            "computed_at": now_ist_iso(),
         }
 
     selected = strike_response["selected"]
@@ -1246,7 +1400,9 @@ async def position_size_signal(index_id: str, available_capital: float | None = 
         "status": "ok", "index_id": index_id, "model_id": "position_sizing",
         "direction": strike_response.get("direction"), "selected_strike": selected,
         "quant_confidence": strike_response.get("quant_confidence"),
-        **sizing_result, "computed_at": datetime.utcnow().isoformat(),
+        # Forward the same authorization to the execution layer.
+        "authorization": strike_response.get("authorization"),
+        **sizing_result, "computed_at": now_ist_iso(),
     }
 
 
@@ -1263,7 +1419,7 @@ async def circuit_breakers_signal(daily_pnl_pct: float = 0.0, consecutive_losses
         daily_pnl_pct=daily_pnl_pct, consecutive_losses=consecutive_losses,
         open_position_count=open_position_count,
     )
-    return {"status": "ok", "model_id": "circuit_breakers", **result, "computed_at": datetime.utcnow().isoformat()}
+    return {"status": "ok", "model_id": "circuit_breakers", **result, "computed_at": now_ist_iso()}
 
 
 # ---------------- Execution (Paper Trading) ----------------
@@ -1563,7 +1719,10 @@ async def paper_enter(index_id: str, available_capital: float | None = None,
     lots = sizing["lots"]
     lot_size = sizing["lot_size"]
 
-    entry_result = execute_paper_entry(index_id, direction, selected_strike, lots, lot_size)
+    entry_result = execute_paper_entry(
+        index_id, direction, selected_strike, lots, lot_size,
+        authorization=sizing.get("authorization"),
+    )
     return {"status": "ok", **entry_result}
 
 
@@ -1718,7 +1877,7 @@ async def backtest_run(index_id: str, candle_limit: int = 2000, initial_capital:
     up out-of-sample rather than just curve-fitting to the whole history.
     """
     index_id = index_id.upper()
-    candles = get_recent_candles(index_id, limit=candle_limit)
+    candles = _get_analysis_candles(index_id, limit=candle_limit)
 
     if len(candles) < 150:
         return {"status": "error", "message": f"Not enough candle history ({len(candles)} candles) — run /backfill/{index_id} first, or wait for more live data to accumulate."}
@@ -1792,7 +1951,7 @@ async def backtest_run_bs(index_id: str, candle_limit: int = 200000, initial_cap
     premium, sigma used, P&L, and exit reason for full auditability.
     """
     index_id = index_id.upper()
-    candles = get_recent_candles(index_id, limit=candle_limit)
+    candles = _get_analysis_candles(index_id, limit=candle_limit)
     if len(candles) < 150:
         return {"status": "error", "message": f"Not enough candle history ({len(candles)} candles) — run /backfill/extended/{index_id}?days=730 first."}
 
@@ -1854,3 +2013,211 @@ async def backtest_apply(body: ApplyBacktestParams):
         return {"status": "error", "message": f"Unknown index '{body.index_id}'"}
     mark_backtest_run_applied(body.run_id)
     return {"status": "ok", "config": new_config, "message": f"Backtest run #{body.run_id}'s settings applied to {body.index_id.upper()}'s live config."}
+
+
+@app.get("/models/live/{index_id}")
+async def live_models(index_id: str):
+    """Compute and report every dashboard model with its live input health."""
+    index_id = index_id.upper()
+    candles = _get_analysis_candles(index_id, limit=200)
+    latest_candle = candles[-1].get("candle_timestamp") if candles else None
+    source_health = {
+        "candles": {"available": bool(candles), "count": len(candles), "latest": latest_candle},
+        "prices": dict(shared_state.poller_status.get("prices", {})),
+        "option_chain": dict(shared_state.poller_status.get("option_chain", {})),
+        "depth": dict(shared_state.poller_status.get("depth", {})),
+        "futures": dict(shared_state.poller_status.get("futures_depth", {})),
+        "decision_loop": dict(shared_state.poller_status.get("decision_loop", {})),
+    }
+    now = datetime.fromisoformat(now_ist_iso())
+    if latest_candle:
+        candle_dt = datetime.fromisoformat(latest_candle.replace("Z", "+00:00"))
+        source_health["candles"]["age_seconds"] = round((now - candle_dt.astimezone(now.tzinfo)).total_seconds(), 2)
+    freshness_limits = {"prices": 10, "option_chain": 10, "depth": 10, "futures": 15, "decision_loop": 30}
+    for source, limit in freshness_limits.items():
+        last_success = source_health[source].get("last_success")
+        try:
+            age = (now - datetime.fromisoformat(last_success)).total_seconds() if last_success else None
+        except (TypeError, ValueError):
+            age = None
+        source_health[source]["age_seconds"] = round(age, 2) if age is not None else None
+
+    specs = [
+        ("realized_vol_multiwindow", "A", "candles", lambda: realized_vol_signal(index_id)),
+        ("garch_1_1", "A", "candles", lambda: garch_vol_signal(index_id)),
+        ("variance_risk_premium", "B", "option_chain", lambda: vrp_signal(index_id, persist=False)),
+        ("iv_rank_percentile", "B", "option_chain", lambda: iv_rank_signal(index_id)),
+        ("hurst_exponent", "C", "candles", lambda: hurst_signal(index_id)),
+        ("zscore_price_deviation", "C", "candles", lambda: zscore_signal(index_id)),
+        ("autocorrelation_variance_ratio", "C", "candles", lambda: variance_ratio_signal(index_id)),
+        ("order_flow_imbalance", "C", "depth", lambda: ofi_signal(index_id)),
+        ("nifty_monthly_futures_order_flow_imbalance", "C", "futures", lambda: nifty_futures_ofi_signal()),
+        ("gamma_exposure", "D", "option_chain", lambda: gex_signal(index_id)),
+        ("put_call_ratio_oi", "D", "option_chain", lambda: pcr_signal(index_id)),
+        ("max_pain", "D", "option_chain", lambda: max_pain_signal(index_id)),
+        ("oi_change_analysis", "D", "option_chain", lambda: oi_change_signal(index_id)),
+        ("vix_level_roc", "E", "candles", lambda: vix_regime_signal()),
+        ("realized_implied_ratio", "E", "candles", lambda: rv_iv_ratio_signal(index_id)),
+        ("correlation_breakdown", "E", "prices", lambda: correlation_breakdown_signal()),
+        ("fractional_kelly", "F", "decision_loop", lambda: kelly_sizing_signal()),
+        ("vol_scaled_sizing", "F", "candles", lambda: vol_scaled_sizing_signal(index_id)),
+        ("gbt_ensemble_classifier", "G", "decision_loop", lambda: group_g_status_signal(index_id)),
+    ]
+    production = _LAST_CONFLUENCE_EVALUATION if (
+        _LAST_CONFLUENCE_EVALUATION and _LAST_CONFLUENCE_EVALUATION.get("index_id") == index_id
+    ) else None
+    production_outputs = (production or {}).get("model_outputs", {})
+    production_evaluation_id = (production or {}).get("evaluation_id")
+    production_audit = ((production or {}).get("quant_result") or {}).get("model_integration", {})
+    integration = {
+        "realized_vol_multiwindow": ("ACTIVE — NOT CONTRIBUTING", "context only; not passed to quant_score"),
+        "garch_1_1": ("ACTIVE — NOT CONTRIBUTING", "context only; not passed to quant_score"),
+        "variance_risk_premium": ("ACTIVE & PREMIUM SUITABILITY", "option-premium suitability result; optional gate"),
+        "iv_rank_percentile": ("ACTIVE — NOT CONTRIBUTING", "diagnostic only; not passed to quant_score"),
+        "hurst_exponent": ("ACTIVE & CONTRIBUTING", "quant_score uses hurst regime to interpret zscore"),
+        "zscore_price_deviation": ("ACTIVE & CONTRIBUTING", "quant_score zscore vote"),
+        "autocorrelation_variance_ratio": ("ACTIVE & CONFIRMING", "confirms or withholds the Hurst-selected z-score regime"),
+        "order_flow_imbalance": ("ACTIVE & CONTRIBUTING", "quant_score OFI vote when valid"),
+        "nifty_monthly_futures_order_flow_imbalance": ("ACTIVE & CONTRIBUTING", "fresh futures depth vote; one valid contract is accepted as partial"),
+        "gamma_exposure": ("ACTIVE — NOT CONTRIBUTING", "diagnostic/context only"),
+        "put_call_ratio_oi": ("ACTIVE & CONTRIBUTING", "quant_score PCR vote"),
+        "max_pain": ("ACTIVE & CONTRIBUTING", "quant_score max-pain vote"),
+        "oi_change_analysis": ("ACTIVE & CONTRIBUTING", "quant_score OI-change vote"),
+        "vix_level_roc": ("ACTIVE — NOT CONTRIBUTING", "regime diagnostic only"),
+        "realized_implied_ratio": ("ACTIVE — NOT CONTRIBUTING", "regime diagnostic only"),
+        "correlation_breakdown": ("DISABLED", "requires at least two index return series; this app trades NIFTY50 only"),
+        "fractional_kelly": ("ACTIVE — NOT CONTRIBUTING", "position-sizing output; not a quant direction vote"),
+        "vol_scaled_sizing": ("ACTIVE — NOT CONTRIBUTING", "position-sizing output; not a quant direction vote"),
+        "gbt_ensemble_classifier": ("ACTIVE & CONTRIBUTING", "quant_score Group G vote when active with a score"),
+    }
+    production_keys = {
+        "realized_vol_multiwindow": "realized_vol", "garch_1_1": "garch",
+        "variance_risk_premium": "vrp", "iv_rank_percentile": "iv_rank",
+        "hurst_exponent": "hurst", "zscore_price_deviation": "zscore",
+        "autocorrelation_variance_ratio": "variance_ratio", "order_flow_imbalance": "ofi",
+        "nifty_monthly_futures_order_flow_imbalance": "futures_ofi",
+        "gamma_exposure": "gex", "put_call_ratio_oi": "pcr",
+        "max_pain": "max_pain", "oi_change_analysis": "oi_change",
+        "vix_level_roc": "vix_regime", "realized_implied_ratio": "rv_iv_ratio",
+        "correlation_breakdown": "correlation", "fractional_kelly": "kelly",
+        "vol_scaled_sizing": "vol_scaled", "gbt_ensemble_classifier": "group_g",
+    }
+    models = []
+    for model_id, group, dependency, runner in specs:
+        try:
+            result = await runner()
+            result_status = result.get("status", "ok")
+            if result_status == "not_applicable":
+                health = "not_applicable"
+            elif result_status != "ok":
+                health = "unavailable"
+            elif model_id == "hurst_exponent" and result.get("hurst") is None:
+                health = "unavailable"
+            elif model_id == "autocorrelation_variance_ratio" and result.get("variance_ratio") is None:
+                health = "unavailable"
+            elif model_id == "variance_risk_premium" and result.get("vrp_pct") is None:
+                health = "unavailable"
+            elif dependency == "candles" and (
+                not candles or source_health["candles"].get("age_seconds") is None
+                or source_health["candles"].get("age_seconds") > 120
+            ):
+                health = "stale"
+            elif dependency in freshness_limits and (
+                source_health[dependency].get("age_seconds") is None
+                or source_health[dependency].get("age_seconds") > freshness_limits[dependency]
+                or source_health[dependency].get("last_error")
+            ):
+                health = "stale"
+            else:
+                health = "healthy"
+            integration_status, integration_reason = integration[model_id]
+            audit_key = production_keys.get(model_id)
+            contribution = production_audit.get(audit_key) if audit_key else None
+            if contribution:
+                state = contribution.get("state")
+                state_labels = {
+                    "contributing": ("ACTIVE & CONTRIBUTING", "eligible vote reached quant_score"),
+                    "directional_context": ("ACTIVE & CONTEXT ONLY", contribution.get("exclusion_reason")),
+                    "confirmation": ("ACTIVE & CONFIRMING", contribution.get("exclusion_reason")),
+                    "context_only": ("ACTIVE & CONTEXT ONLY", contribution.get("exclusion_reason")),
+                    "premium_suitability": ("ACTIVE & PREMIUM SUITABILITY", contribution.get("exclusion_reason")),
+                    "diagnostic_only": ("DIAGNOSTIC ONLY", contribution.get("exclusion_reason")),
+                    "sizing_input": ("ACTIVE & SIZING INPUT", contribution.get("exclusion_reason")),
+                    "disabled": ("DISABLED", contribution.get("exclusion_reason")),
+                    "unavailable": ("UNAVAILABLE", contribution.get("exclusion_reason")),
+                    "not_evaluated": ("ACTIVE — NOT CONTRIBUTING", contribution.get("exclusion_reason")),
+                }
+                integration_status, integration_reason = state_labels.get(
+                    state, (integration_status, integration_reason)
+                )
+            if health == "error":
+                integration_status = "ERROR"
+                integration_reason = "model execution raised an exception"
+            elif health in {"unavailable", "stale"} and integration_status == "ACTIVE & CONTRIBUTING":
+                integration_status = "STALE"
+                integration_reason = "required live input is unavailable or stale"
+            production_key = production_keys.get(model_id)
+            production_result = production_outputs.get(production_key) if production_key else None
+            if integration_status == "ACTIVE & CONTRIBUTING":
+                if production is None or production_result is None:
+                    integration_status = "STALE"
+                    integration_reason = "no completed production confluence evaluation is available"
+                elif isinstance(production_result, dict) and (
+                    (production_key == "ofi" and production_result.get("ofi") is None)
+                    or (production_key == "group_g" and production_result.get("score") is None)
+                ):
+                    integration_status = "ACTIVE — NOT CONTRIBUTING"
+                    integration_reason = "model executed but existing eligibility rules produced no usable vote"
+            display_result = result
+            if production_key and isinstance(production_result, dict) and production is not None:
+                display_result = {
+                    **production_result,
+                    "status": "ok",
+                    "computed_at": production_evaluation_id,
+                    "evaluation_id": production_evaluation_id,
+                }
+            models.append({
+                "model_id": model_id, "group": group, "health": health,
+                "dependency": dependency, "computed_at": display_result.get("computed_at"),
+                "evaluation_id": production_evaluation_id if production_key else result.get("computed_at"),
+                "integration_status": integration_status, "integration_reason": integration_reason,
+                "contribution": contribution,
+                "result": display_result,
+            })
+        except Exception as exc:
+            models.append({
+                "model_id": model_id, "group": group, "health": "error",
+                "dependency": dependency, "integration_status": "ERROR", "error": str(exc),
+            })
+
+    models.append({
+        "model_id": "confluence_gate", "group": "aggregate",
+        "health": "decision_loop_only", "dependency": "decision_loop",
+        "integration_status": "ACTIVE & CONTRIBUTING",
+        "computed_at": source_health["decision_loop"].get("last_success"),
+        "evaluation_id": production_evaluation_id,
+        "result": (production or {}).get("gate_result"),
+        "note": "Aggregate confluence is computed by the live decision loop; this endpoint does not trigger a duplicate trade evaluation.",
+    })
+    groups = {}
+    for model in models:
+        group = model.get("group")
+        if group == "aggregate":
+            continue
+        bucket = groups.setdefault(group, {"models": [], "contributing_models": [], "excluded_models": []})
+        bucket["models"].append(model["model_id"])
+        contribution = model.get("contribution") or {}
+        if contribution.get("contributes_to_score"):
+            bucket["contributing_models"].append(model["model_id"])
+        else:
+            bucket["excluded_models"].append({
+                "model_id": model["model_id"],
+                "state": contribution.get("state", model.get("integration_status")),
+                "reason": contribution.get("exclusion_reason", model.get("integration_reason")),
+            })
+    return {
+        "status": "ok", "index_id": index_id,
+        "computed_at": now_ist_iso(), "production_evaluation_id": production_evaluation_id,
+        "source_health": source_health, "models": models, "groups": groups,
+        "directional_authority": (production or {}).get("quant_result", {}).get("directional_alignment"),
+    }

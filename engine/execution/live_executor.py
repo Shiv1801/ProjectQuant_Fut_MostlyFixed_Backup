@@ -28,6 +28,7 @@ from datetime import datetime, timezone, timedelta
 
 from engine.data_layer.fyers_client.auth import get_fyers_model
 from config.db import log_rejection, log_trade_action, open_position
+from engine.confluence_gate.direction import validate_entry_candidate
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -38,8 +39,9 @@ SIDE_SELL = -1
 
 
 def place_live_entry_order(access_token: str, index_id: str, fyers_symbol: str,
-                            qty: int, direction: str, strike: float, option_type: str,
-                            lots: int, lot_size: int, side: int = SIDE_BUY) -> dict:
+                             qty: int, direction: str, strike: float, option_type: str,
+                             lots: int, lot_size: int, side: int = SIDE_BUY,
+                             authorization: dict | None = None) -> dict:
     """
     Places a REAL market buy order for one option contract. qty must
     already be lots * lot_size (the actual number of units to buy, not
@@ -54,6 +56,16 @@ def place_live_entry_order(access_token: str, index_id: str, fyers_symbol: str,
     logs a full rejection_log entry and returns without opening any
     position — a rejected order was never a real trade.
     """
+    validation = validate_entry_candidate(direction, option_type, fyers_symbol, index_id)
+    if not validation["valid"]:
+        return {"status": "rejected", "message": validation["reason"], "directional_validation": validation}
+    if not isinstance(authorization, dict) or authorization.get("fired") is not True:
+        return {"status": "rejected", "message": "authoritative confluence authorization required"}
+    if authorization.get("direction") != direction:
+        return {"status": "rejected", "message": "authorization direction mismatch"}
+    if side != SIDE_BUY:
+        return {"status": "rejected", "message": "new option entries must use BUY side", "order_data": {"side": side}}
+
     fyers = get_fyers_model(access_token)
 
     order_data = {

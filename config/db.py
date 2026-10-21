@@ -6,6 +6,7 @@ no "ADD COLUMN IF NOT EXISTS"). This file should never again require
 deleting data/project_trade.db to pick up a schema change.
 """
 import sqlite3
+import json
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -97,6 +98,67 @@ def init_db():
     # tracks live-tick-update count for the in-progress current minute).
     _add_column_if_missing(conn, "candles", "volume", "REAL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_candles_index_bucket ON candles (index_id, minute_bucket DESC)")
+
+    # Contract-aware NIFTY futures storage. These tables are additive and do
+    # not alter existing spot, option, position, or trade tables.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS futures_quotes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            expiry_epoch INTEGER NOT NULL,
+            quote_timestamp TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            ltp REAL,
+            change REAL,
+            change_pct REAL,
+            open REAL,
+            high REAL,
+            low REAL,
+            prev_close REAL,
+            source TEXT NOT NULL DEFAULT 'fyers_quotes',
+            UNIQUE(symbol, quote_timestamp)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_futures_quotes_symbol_ts ON futures_quotes (symbol, quote_timestamp DESC)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS futures_candles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            expiry_epoch INTEGER NOT NULL,
+            minute_bucket TEXT NOT NULL,
+            candle_timestamp TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL,
+            volume_status TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'fyers_history',
+            UNIQUE(symbol, minute_bucket)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_futures_candles_symbol_bucket ON futures_candles (symbol, minute_bucket DESC)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS futures_depth_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            expiry_epoch INTEGER NOT NULL,
+            observed_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            depth_status TEXT NOT NULL,
+            total_buy_qty REAL,
+            total_sell_qty REAL,
+            raw_json TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'fyers_depth',
+            UNIQUE(symbol, observed_at)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_futures_depth_symbol_ts ON futures_depth_snapshots (symbol, observed_at DESC)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS atm_iv_history (
@@ -302,6 +364,10 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_model_scores_index_ts ON model_scores (index_id, timestamp DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_model_scores_position ON model_scores (position_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_model_scores_unlinked ON model_scores (index_id, position_id, timestamp DESC)")
+    # Keep the production evaluation identity with each persisted feature row.
+    # The live snapshot remains process-local, but its provenance must survive
+    # restarts for model freshness and contribution audits.
+    _add_column_if_missing(conn, "model_scores", "evaluation_id", "TEXT")
 
     # Added 2026-09-30, alongside Group G: records the Leg-1 quant
     # confidence score a trade actually fired at, directly on positions
@@ -473,6 +539,118 @@ def update_candle_volume(index_id: str, minute_bucket: str, volume: float | None
     return updated
 
 
+def insert_futures_quote(quote: dict) -> bool:
+    if not quote.get("quote_timestamp"):
+        return False
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO futures_quotes
+           (role, symbol, expiry_epoch, quote_timestamp, fetched_at, ltp,
+            change, change_pct, open, high, low, prev_close)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            quote["role"], quote["symbol"], quote["expiry_epoch"],
+            quote["quote_timestamp"], quote["fetched_at"], quote.get("ltp"),
+            quote.get("change"), quote.get("change_pct"), quote.get("open"),
+            quote.get("high"), quote.get("low"), quote.get("prev_close"),
+        ),
+    )
+    conn.commit()
+    inserted = cur.rowcount > 0
+    conn.close()
+    return inserted
+
+
+def insert_futures_candles(candles: list[dict]) -> int:
+    conn = get_connection()
+    inserted = 0
+    for candle in candles:
+        cur = conn.execute(
+            """INSERT INTO futures_candles
+               (role, symbol, expiry_epoch, minute_bucket, candle_timestamp,
+                open, high, low, close, volume, volume_status, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(symbol, minute_bucket) DO UPDATE SET
+                 role=excluded.role, expiry_epoch=excluded.expiry_epoch,
+                 candle_timestamp=excluded.candle_timestamp,
+                 open=excluded.open, high=excluded.high, low=excluded.low,
+                 close=excluded.close, volume=excluded.volume,
+                 volume_status=excluded.volume_status, source=excluded.source""",
+            (
+                candle["role"], candle["symbol"], candle["expiry_epoch"],
+                candle["minute_bucket"], candle["candle_timestamp"],
+                candle["open"], candle["high"], candle["low"], candle["close"],
+                candle.get("volume"), candle["volume_status"], candle.get("source", "fyers_history"),
+            ),
+        )
+        inserted += cur.rowcount
+    conn.commit()
+    conn.close()
+    return inserted
+
+
+def insert_futures_depth_snapshot(snapshot: dict) -> bool:
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO futures_depth_snapshots
+           (role, symbol, expiry_epoch, observed_at, status, depth_status,
+            total_buy_qty, total_sell_qty, raw_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            snapshot["role"], snapshot["symbol"], snapshot["expiry_epoch"],
+            snapshot["observed_at"], snapshot["status"], snapshot["depth_status"],
+            snapshot.get("total_buy_qty"), snapshot.get("total_sell_qty"),
+            json.dumps(snapshot.get("raw"), separators=(",", ":"), default=str),
+        ),
+    )
+    conn.commit()
+    inserted = cur.rowcount > 0
+    conn.close()
+    return inserted
+
+
+def get_recent_futures_candles(symbol: str, limit: int = 60) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT * FROM futures_candles WHERE symbol = ?
+           ORDER BY minute_bucket DESC LIMIT ?""", (symbol, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in reversed(rows)]
+
+
+def get_continuous_futures_candles(limit: int = 60) -> list[dict]:
+    """Return an expiry-aware, back-adjusted NIFTY futures candle series."""
+    from engine.data_layer.futures_pipeline import build_continuous_futures_candles
+
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT * FROM futures_candles
+           ORDER BY minute_bucket ASC, expiry_epoch ASC, symbol ASC"""
+    ).fetchall()
+    conn.close()
+    return build_continuous_futures_candles([dict(row) for row in rows], limit=limit)
+
+
+def get_futures_candle_count() -> dict:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) AS count, MAX(candle_timestamp) AS latest FROM futures_candles"
+    ).fetchone()
+    conn.close()
+    return {"count": row["count"], "latest": row["latest"]}
+
+
+def get_latest_futures_quote(symbol: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT * FROM futures_quotes WHERE symbol = ?
+           ORDER BY quote_timestamp DESC LIMIT 1""", (symbol,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_recent_candles(index_id: str, limit: int = 60):
     conn = get_connection()
     rows = conn.execute(
@@ -636,8 +814,9 @@ def open_position(index_id: str, direction: str, option_symbol: str, strike: flo
 
 
 def insert_model_score(index_id: str, fired: bool, direction: str | None, veto_reason: str | None,
-                        quant_confidence: float | None, chart_confirmed: bool | None,
-                        vwap_confirmed: bool | None, feature_vector: dict) -> int:
+                       quant_confidence: float | None, chart_confirmed: bool | None,
+                       vwap_confirmed: bool | None, feature_vector: dict,
+                       evaluation_id: str | None = None) -> int:
     """
     Logs ONE confluence-gate evaluation (Group G training data — added
     2026-09-30). Called from every real evaluation in api/main.py's
@@ -655,12 +834,12 @@ def insert_model_score(index_id: str, fired: bool, direction: str | None, veto_r
     cursor = conn.execute(
         """INSERT INTO model_scores
            (index_id, timestamp, fired, direction, veto_reason, quant_confidence,
-            chart_confirmed, vwap_confirmed, feature_vector_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            chart_confirmed, vwap_confirmed, feature_vector_json, evaluation_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (index_id, now_ist().isoformat(), int(fired), direction, veto_reason, quant_confidence,
-         None if chart_confirmed is None else int(chart_confirmed),
-         None if vwap_confirmed is None else int(vwap_confirmed),
-         json.dumps(feature_vector)),
+          None if chart_confirmed is None else int(chart_confirmed),
+          None if vwap_confirmed is None else int(vwap_confirmed),
+          json.dumps(feature_vector), evaluation_id),
     )
     conn.commit()
     score_id = cursor.lastrowid

@@ -51,11 +51,11 @@ def get_market_depth(access_token, symbol):
     fyers = get_fyers_model(access_token)
     return fyers.depth({"symbol": symbol, "ohlcv_flag": "1"})
 
-def get_historical_candles(access_token, symbol, resolution, range_from, range_to):
+def get_historical_candles(access_token, symbol, resolution, range_from, range_to, cont_flag=1):
     fyers = get_fyers_model(access_token)
     return fyers.history({
         "symbol": symbol, "resolution": resolution, "date_format": "1",
-        "range_from": range_from, "range_to": range_to, "cont_flag": "1",
+        "range_from": range_from, "range_to": range_to, "cont_flag": cont_flag,
     })
 
 def get_funds(access_token: str) -> dict:

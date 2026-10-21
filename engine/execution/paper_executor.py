@@ -16,6 +16,7 @@ from config.db import (
 )
 from engine.risk_engine.stops import check_hard_stop_loss, update_trailing_stop, check_session_end
 from engine.execution.trade_dispatcher import execute_exit
+from engine.confluence_gate.direction import validate_entry_candidate
 
 IST = timezone(timedelta(hours=5, minutes=30))
 MARKET_OPEN = (9, 15)   # 9:15 AM IST
@@ -66,7 +67,8 @@ def market_minutes_between(start: datetime, end: datetime) -> float:
 
 
 def execute_paper_entry(index_id: str, direction: str, selected_strike: dict, lots: int, lot_size: int,
-                         quant_confidence: float | None = None) -> dict:
+                         quant_confidence: float | None = None, authorization: dict | None = None,
+                         intent: str = "NEW_ENTRY") -> dict:
     """
     Opens a new paper position from a fired signal + chosen strike + sized
     lots. Does not touch Fyers (paper mode never places real orders) —
@@ -83,6 +85,22 @@ def execute_paper_entry(index_id: str, direction: str, selected_strike: dict, lo
     confluence_signal. Optional/None for any caller that doesn't have it
     (e.g. a manual/test entry) -- never fabricated.
     """
+    if intent != "NEW_ENTRY":
+        return {"opened": False, "note": "paper entry accepts NEW_ENTRY intent only"}
+
+    directional_validation = validate_entry_candidate(
+        direction, selected_strike.get("option_type"), selected_strike.get("symbol"), index_id
+    )
+    if not directional_validation["valid"]:
+        return {
+            "opened": False,
+            "note": directional_validation["reason"],
+            "directional_validation": directional_validation,
+        }
+
+    if not isinstance(authorization, dict) or authorization.get("fired") is not True:
+        return {"opened": False, "note": "authoritative confluence authorization required"}
+
     entry_price = selected_strike.get("ltp")
     if not entry_price or entry_price <= 0:
         return {"opened": False, "note": "invalid entry price on selected strike"}

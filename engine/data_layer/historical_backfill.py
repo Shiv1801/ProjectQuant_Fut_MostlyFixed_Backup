@@ -6,8 +6,9 @@ live candle format exactly, so historical + live candles are
 interchangeable in the same table.
 """
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def convert_fyers_candles_to_ist(raw_candles: list[list]) -> list[dict]:

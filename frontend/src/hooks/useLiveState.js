@@ -6,30 +6,31 @@ import { useEffect, useState, useRef } from 'react'
 
 export function useLiveState() {
   const [state, setState] = useState({
-    indices: {}, vix: null, positions: [], modelScores: {}, signals: [], riskState: null, regime: null,
+    indices: {}, vix: null, positions: [], modelScores: {}, modelHealth: [], sourceHealth: {}, signals: [], riskState: null, regime: null,
   })
   const wsRef = useRef(null)
 
   useEffect(() => {
-    const ws = new WebSocket(`ws://${window.location.host}/ws/live`)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/prices`)
     wsRef.current = ws
     ws.onmessage = (event) => {
       const payload = JSON.parse(event.data)
-      setState((prev) => mergePayload(prev, payload))
+      setState((prev) => ({ ...prev, indices: payload.data ?? prev.indices }))
     }
-    return () => ws.close()
+    const loadModels = async () => {
+      try {
+        const response = await fetch('/models/live/NIFTY50')
+        const payload = await response.json()
+        setState((prev) => ({ ...prev, modelHealth: payload.models ?? [], sourceHealth: payload.source_health ?? {} }))
+      } catch {
+        setState((prev) => ({ ...prev, sourceHealth: { ...prev.sourceHealth, models: 'unavailable' } }))
+      }
+    }
+    loadModels()
+    const modelTimer = window.setInterval(loadModels, 1000)
+    return () => { ws.close(); window.clearInterval(modelTimer) }
   }, [])
 
   return state
-}
-
-function mergePayload(prev, payload) {
-  // Route incoming pub/sub messages into the right slice of state based on channel/type
-  if (payload.model_id) {
-    return { ...prev, modelScores: { ...prev.modelScores, [`${payload.index_id}:${payload.model_id}`]: payload } }
-  }
-  if (payload.direction !== undefined) {
-    return { ...prev, signals: [payload, ...prev.signals].slice(0, 50) }
-  }
-  return prev
 }

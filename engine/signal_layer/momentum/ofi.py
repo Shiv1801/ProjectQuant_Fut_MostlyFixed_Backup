@@ -26,6 +26,8 @@ BUY_PRESSURE_THRESHOLD = 0.2
 SELL_PRESSURE_THRESHOLD = -0.2
 DEFAULT_MAX_AGE_SECONDS = 15.0
 EXPECTED_FUTURES_CONTRACTS = 2
+CURRENT_MONTH_ROLE = "current_month"
+NEXT_MONTH_ROLE = "next_month"
 
 _MONTHLY_NIFTY_FUTURE = re.compile(
     r"^NSE:NIFTY\d{2}"
@@ -213,10 +215,15 @@ def discover_nifty_monthly_futures(
     # Deduplicate symbols and order by expiry.
     unique = {item["symbol"]: item for item in matches}
 
-    return sorted(
+    selected = sorted(
         unique.values(),
         key=lambda item: item["expiry_epoch"],
     )[:EXPECTED_FUTURES_CONTRACTS]
+
+    for index, item in enumerate(selected):
+        item["role"] = CURRENT_MONTH_ROLE if index == 0 else NEXT_MONTH_ROLE
+
+    return selected
 
 
 def calculate_futures_ofi(
@@ -262,6 +269,7 @@ def calculate_futures_ofi(
     for item in contracts:
         row: dict[str, Any] = {
             "symbol": item.get("symbol"),
+            "role": item.get("role"),
             "expiry": item.get("expiry"),
             "status": "missing",
             "ofi": None,
@@ -273,6 +281,18 @@ def calculate_futures_ofi(
         }
 
         updated_at = item.get("updated_at")
+
+        if not isinstance(item.get("symbol"), str) or not _MONTHLY_NIFTY_FUTURE.fullmatch(item["symbol"]):
+            row["status"] = "invalid_contract"
+            row["note"] = "Symbol is not a standard NIFTY monthly futures contract"
+            evaluated.append(row)
+            continue
+
+        if item.get("role") is not None and item.get("role") not in {CURRENT_MONTH_ROLE, NEXT_MONTH_ROLE}:
+            row["status"] = "invalid_contract"
+            row["note"] = "Unknown futures contract role"
+            evaluated.append(row)
+            continue
 
         try:
             updated = datetime.fromisoformat(
@@ -350,6 +370,13 @@ def calculate_futures_ofi(
         else:
             interpretation = "balanced order flow"
 
+    health_status = "AVAILABLE" if overall_status == "valid" else (
+        "STALE" if any(row["status"] == "stale" for row in evaluated) else
+        "INVALID_CONTRACT" if any(row["status"] == "invalid_contract" for row in evaluated) else
+        "INVALID_DATA" if any(row["status"] == "invalid" for row in evaluated) else
+        "MISSING_DEPTH" if overall_status == "partial" or any(row["status"] in {"missing", "missing_timestamp", "no_depth"} for row in evaluated) else
+        "NO_VALID_CONTRACTS"
+    )
     return {
         "status": overall_status,
         "combined_ofi": combined_ofi,
@@ -360,5 +387,6 @@ def calculate_futures_ofi(
         "total_sell_qty": total_sell,
         "contracts": evaluated,
         "max_age_seconds": float(max_age_seconds),
-        "diagnostic_only": True,
+        "health_status": health_status,
+        "diagnostic_only": False,
     }

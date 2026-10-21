@@ -9,9 +9,10 @@ threaded for our background tasks + request handlers, so a plain dict
 is safe here — no separate locking needed as long as we don't introduce
 real OS threads elsewhere.
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = ZoneInfo("Asia/Kolkata")
 
 # Fyers auth-rejection error codes per official docs' Common API Error
 # Codes table — distinct from rate-limit (429) or generic network errors.
@@ -52,7 +53,17 @@ class SharedState:
         self.futures_depth: dict[str, dict] = {}
         self.futures_depth_errors: dict[str, str] = {}
         self.futures_contracts: list[dict] = []
+        self.futures_contracts_last_known: list[dict] = []
         self.futures_contracts_updated_at: str | None = None
+        self.futures_discovery_status = "unavailable"
+        self.futures_discovery_error: str | None = None
+        self.futures_discovery_updated_at: str | None = None
+        self.futures_quotes: dict[str, dict] = {}
+        self.futures_candles: dict[str, list[dict]] = {}
+        self.futures_data_status: dict[str, dict] = {
+            "current_month": {"status": "unavailable", "fields": {}},
+            "next_month": {"status": "unavailable", "fields": {}},
+        }
 
         self.poller_status: dict[str, dict] = {
             "prices": {"running": False, "last_success": None, "last_error": None, "consecutive_errors": 0},
@@ -102,20 +113,104 @@ class SharedState:
 
     # ---- Standard NIFTY monthly futures depth (diagnostic only) ----
     def set_futures_contracts(self, contracts: list[dict]):
-        self.futures_contracts = list(contracts)
-        self.futures_contracts_updated_at = now_ist_iso()
+        selected_at = now_ist_iso()
+        previous_symbols = {item.get("symbol") for item in self.futures_contracts}
+        selected = [
+            {**contract, "selected_at": selected_at, "discovery_status": "available"}
+            for contract in contracts
+        ]
+        selected_symbols = {item.get("symbol") for item in selected}
+        for symbol, snapshot in self.futures_depth.items():
+            if symbol in previous_symbols - selected_symbols:
+                snapshot["quality_status"] = "stale"
 
-    def set_futures_depth(self, symbol: str, data: dict, contract: dict):
+        self.futures_contracts = selected
+        self.futures_contracts_last_known = list(selected)
+        self.futures_contracts_updated_at = selected_at
+        self.futures_discovery_status = "available"
+        self.futures_discovery_error = None
+        self.futures_discovery_updated_at = self.futures_contracts_updated_at
+        for contract in selected:
+            role = contract["role"]
+            self.futures_quotes.pop(role, None)
+            self.futures_candles.pop(role, None)
+            self.futures_data_status[role] = {
+                "status": "unavailable",
+                "fields": {},
+                "contract_symbol": contract["symbol"],
+                "expiry_epoch": contract.get("expiry_epoch"),
+                "selected_at": selected_at,
+            }
+
+    def mark_futures_discovery_unavailable(self, error: str):
+        """Remove live selections while retaining the last selection diagnostically."""
+        self.futures_contracts = []
+        self.futures_discovery_status = "unavailable"
+        self.futures_discovery_error = error
+        self.futures_discovery_updated_at = now_ist_iso()
+        for status in self.futures_data_status.values():
+            if status.get("status") == "available":
+                status["status"] = "stale"
+
+    def set_futures_quote(self, role: str, quote: dict):
+        self.futures_quotes[role] = dict(quote)
+        self.futures_data_status.setdefault(role, {"status": "unavailable", "fields": {}})
+        self.futures_data_status[role]["fields"]["quote"] = quote.get("status", "unavailable")
+        self.futures_data_status[role]["quote_updated_at"] = quote.get("fetched_at")
+        if quote.get("status") == "valid":
+            self.futures_data_status[role]["status"] = "available"
+            self.futures_data_status[role]["last_success"] = quote.get("fetched_at")
+        elif quote.get("status"):
+            self.futures_data_status[role]["status"] = quote["status"]
+
+    def set_futures_candles(self, role: str, candles: list[dict], status: str = "available"):
+        self.futures_candles[role] = list(candles)
+        self.futures_data_status.setdefault(role, {"status": "unavailable", "fields": {}})
+        self.futures_data_status[role]["fields"]["candles"] = status
+        self.futures_data_status[role]["candle_updated_at"] = now_ist_iso()
+        if status == "available":
+            self.futures_data_status[role]["last_success"] = self.futures_data_status[role]["candle_updated_at"]
+
+    def get_futures_quote(self, role: str) -> dict | None:
+        return self.futures_quotes.get(role)
+
+    def get_futures_candles(self, role: str) -> list[dict]:
+        return list(self.futures_candles.get(role, []))
+
+    def set_futures_data_error(self, role: str, field: str, error: str):
+        status = self.futures_data_status.setdefault(role, {"status": "unavailable", "fields": {}})
+        status["fields"][field] = "error"
+        status.setdefault("errors", {})[field] = error
+        if status.get("status") == "available":
+            status["status"] = "stale"
+
+    def set_futures_field_status(self, role: str, field: str, value: str, updated_at: str | None = None):
+        status = self.futures_data_status.setdefault(role, {"status": "unavailable", "fields": {}})
+        status["fields"][field] = value
+        if updated_at:
+            status[f"{field}_updated_at"] = updated_at
+
+    def set_futures_depth(self, symbol: str, data: dict, contract: dict, quality_status: str = "valid", observed_at: str | None = None):
         self.futures_depth[symbol] = {
             "symbol": symbol,
+            "role": contract.get("role"),
             "raw": data,
             "expiry_utc": contract.get("expiry_utc"),
             "expiry_epoch": contract.get("expiry_epoch"),
             "lot_size": contract.get("lot_size"),
             "tick_size": contract.get("tick_size"),
-            "updated_at": now_ist_iso(),
+            "updated_at": observed_at or now_ist_iso(),
+            "quality_status": quality_status,
         }
         self.futures_depth_errors.pop(symbol, None)
+        role = contract.get("role")
+        if role:
+            status = self.futures_data_status.setdefault(role, {"status": "unavailable", "fields": {}})
+            status["fields"]["depth"] = quality_status
+            status["depth_updated_at"] = self.futures_depth[symbol]["updated_at"]
+            if quality_status == "valid":
+                status["status"] = "available"
+                status["last_success"] = self.futures_depth[symbol]["updated_at"]
 
     def get_futures_depth(self, symbol: str) -> dict | None:
         return self.futures_depth.get(symbol)

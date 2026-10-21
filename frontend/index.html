@@ -584,9 +584,20 @@
     function toIST(isoString) {
       if (!isoString) return "—";
       try {
-        const date = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+        const hasTimezone = /(?:Z|[+-]\d\d:\d\d)$/.test(isoString);
+        const date = new Date(hasTimezone ? isoString : isoString + "Z");
         if (isNaN(date.getTime())) return "—";
         return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true });
+      } catch { return "—"; }
+    }
+
+    function toISTDateTime(isoString) {
+      if (!isoString) return "—";
+      try {
+        const hasTimezone = /(?:Z|[+-]\d\d:\d\d)$/.test(isoString);
+        const date = new Date(hasTimezone ? isoString : isoString + "Z");
+        if (isNaN(date.getTime())) return "—";
+        return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " IST";
       } catch { return "—"; }
     }
 
@@ -726,14 +737,23 @@
 
     // ---- Candlestick chart: crisp rendering + TradingView-style date/time X-axis ----
     function formatBucketLabel(bucketStr) {
-      // bucketStr looks like "2026-09-02 20:12:00" (already IST, stored as local string)
-      const [datePart, timePart] = bucketStr.split(" ");
-      const [, month, day] = datePart.split("-");
-      const [hh, mm] = timePart.split(":");
-      let h = parseInt(hh, 10);
-      const ampm = h >= 12 ? "PM" : "AM";
-      h = h % 12 || 12;
-      return { dateLabel: `${day}/${month}`, timeLabel: `${h}:${mm} ${ampm}` };
+      const date = new Date(bucketStr.replace(" ", "T") + "Z");
+      if (isNaN(date.getTime())) return { dateLabel: "—", timeLabel: "—" };
+      const dateLabel = date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit" });
+      const timeLabel = date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, hour: "2-digit", minute: "2-digit" });
+      return { dateLabel, timeLabel };
+    }
+
+    function mergeLiveQuoteIntoCandles(candles, futures) {
+      const quote = futures?.quotes?.current_month;
+      if (!quote || typeof quote.ltp !== "number" || !candles?.length) return candles || [];
+      const latest = candles[candles.length - 1];
+      const quoteTime = Date.parse(quote.received_at || quote.fetched_at || "");
+      const candleTime = Date.parse(latest.candle_timestamp || "");
+      if (!Number.isFinite(quoteTime) || !Number.isFinite(candleTime) || Math.floor(quoteTime / 60000) !== Math.floor(candleTime / 60000)) return candles;
+      const adjustment = Number(latest.continuous_adjustment || 0);
+      const close = quote.ltp + adjustment;
+      return [...candles.slice(0, -1), { ...latest, close, high: Math.max(latest.high, close), low: Math.min(latest.low, close) }];
     }
 
     function drawCandles(candles) {
@@ -839,12 +859,20 @@
 
     async function refreshChart() {
       try {
-        const res = await fetch(`${BASE}/candles/${currentChartIndex}?limit=60`);
+        const [res, futuresRes] = await Promise.all([
+          fetch(`${BASE}/candles/${currentChartIndex}?limit=60`),
+          fetch(`${BASE}/market/futures`),
+        ]);
         const payload = await res.json();
+        const futures = await futuresRes.json();
         if (payload.status === "ok") {
-          drawCandles(payload.candles);
+          const candles = mergeLiveQuoteIntoCandles(payload.candles, futures);
+          drawCandles(candles);
           document.getElementById("candleInfo").innerText = `${payload.count} candles loaded`;
-          document.getElementById("chartUpdated").innerText = `updated ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true })} IST`;
+          const quote = futures.quotes?.current_month;
+          const sourceTime = quote?.received_at || quote?.fetched_at;
+          const sourceState = futures.market_status === "market_closed" ? "MARKET CLOSED" : (quote?.status === "valid" ? "LIVE" : "DATA ERROR");
+          document.getElementById("chartUpdated").innerText = `${sourceState} · source received ${toISTDateTime(sourceTime)} · response ${toISTDateTime(payload.response_at)}`;
         }
       } catch {}
 
@@ -896,7 +924,7 @@
             strikeBox.style.display = "none";
           }
           const confPct = gate.quant_confidence !== undefined ? (gate.quant_confidence * 100).toFixed(0) : "—";
-          detailEl.innerText = `quant confidence: ${confPct}% · ${gate.veto_reason || 'both legs agree'}`;
+          detailEl.innerText = `quant confidence: ${confPct}% · ${gate.veto_reason || 'both legs agree'} · evaluation ${toISTDateTime(gate.evaluation_id || gate.computed_at)}`;
 
           // VWAP (Leg 3) display — added 2026-10-06, per explicit requirement:
           // only shows a VWAP number when it was genuinely calculated
@@ -1039,25 +1067,9 @@
           ofiEl.style.color = ofi.ofi > 0.2 ? "#4ade80" : (ofi.ofi < -0.2 ? "#f87171" : "");
           ofiNoteEl.innerText = `Spot OFI ? ${ofi.interpretation || "available"}`;
         } else if (currentChartIndex === "NIFTY50") {
-          // Spot depth may be unavailable; fall back to the separate futures diagnostic.
-          const futuresRes = await fetch(`${BASE}/signals/ofi/NIFTY50/futures`);
-          if (!futuresRes.ok) throw new Error(`Futures OFI HTTP ${futuresRes.status}`);
-          const futures = await futuresRes.json();
-
-          if (
-            futures.status === "ok" &&
-            typeof futures.combined_ofi === "number" &&
-            Number.isFinite(futures.combined_ofi)
-          ) {
-            ofiEl.innerText = futures.combined_ofi.toFixed(4);
-            ofiEl.style.color = "";
-            ofiNoteEl.innerText =
-              `Futures OFI fallback ? ${futures.valid_contracts}/${futures.expected_contracts} contracts ? diagnostic only`;
-          } else {
-            ofiEl.innerText = "?";
-            ofiEl.style.color = "";
-            ofiNoteEl.innerText = futures.note || futures.message || `Futures OFI status: ${futures.status || "unavailable"}`;
-          }
+          ofiEl.innerText = "UNAVAILABLE";
+          ofiEl.style.color = "#fbbf24";
+          ofiNoteEl.innerText = "Spot depth is unavailable. Futures OFI is shown separately as diagnostic-only and is not substituted into the quant score.";
         } else {
           ofiEl.innerText = "?";
           ofiEl.style.color = "";
@@ -1204,14 +1216,18 @@
         const corrRes = await fetch(`${BASE}/signals/correlation-breakdown`);
         const corr = await corrRes.json();
         const corrEl = document.getElementById("corrBreakdownValue");
-        if (corr.status === "ok" && corr.min_correlation !== null && corr.min_correlation !== undefined) {
+        if (corr.availability_status === "DISABLED" || corr.status === "not_applicable") {
+          corrEl.innerText = "DISABLED";
+          corrEl.style.color = "#fbbf24";
+          document.getElementById("corrBreakdownNote").innerText = corr.message || "Requires at least two index return series; NIFTY50-only mode has no valid pair.";
+        } else if (corr.status === "ok" && corr.min_correlation !== null && corr.min_correlation !== undefined) {
           corrEl.innerText = `${corr.min_correlation}`;
           corrEl.style.color = corr.breakdown ? "#f87171" : "#4ade80";
           document.getElementById("corrBreakdownNote").innerText = corr.interpretation || "";
         } else {
           corrEl.innerText = "—";
           corrEl.style.color = "";
-          document.getElementById("corrBreakdownNote").innerText = corr.note || "";
+          document.getElementById("corrBreakdownNote").innerText = `${corr.availability_status || "UNAVAILABLE"} · ${corr.note || ""}`;
         }
       } catch {}
 
@@ -1258,6 +1274,50 @@
           volScaledEl.innerText = "—";
           volScaledEl.style.color = "";
           document.getElementById("volScaledNote").innerText = volScaled.note || "";
+        }
+      } catch {}
+
+      await refreshModelIntegration();
+    }
+
+    async function refreshModelIntegration() {
+      try {
+        const res = await fetch(`${BASE}/models/live/${currentChartIndex}`);
+        const payload = await res.json();
+        if (payload.status !== "ok") return;
+        const ui = {
+          realized_vol_multiwindow: ["rvValue", "rvNote"],
+          garch_1_1: ["garchValue", "garchNote"],
+          variance_risk_premium: ["vrpValue", "vrpNote"],
+          iv_rank_percentile: ["ivRankValue", "ivRankNote"],
+          hurst_exponent: ["hurstValue", "hurstNote"],
+          zscore_price_deviation: ["zscoreValue", "zscoreNote"],
+          autocorrelation_variance_ratio: ["vrTestValue", "vrTestNote"],
+          order_flow_imbalance: ["ofiValue", "ofiNote"],
+          nifty_monthly_futures_order_flow_imbalance: ["futuresOfiValue", "futuresOfiNote"],
+          gamma_exposure: ["gexValue", "gexNote"],
+          put_call_ratio_oi: ["pcrValue", "pcrNote"],
+          max_pain: ["maxPainValue", "maxPainNote"],
+          oi_change_analysis: ["oiChangeValue", "oiChangeNote"],
+          vix_level_roc: ["vixRegimeValue", "vixRegimeNote"],
+          realized_implied_ratio: ["rvIvRatioValue", "rvIvRatioNote"],
+          correlation_breakdown: ["corrBreakdownValue", "corrBreakdownNote"],
+          fractional_kelly: ["kellyValue", "kellyNote"],
+          vol_scaled_sizing: ["volScaledValue", "volScaledNote"],
+          gbt_ensemble_classifier: ["groupGValue", "groupGNote"],
+        };
+        for (const model of payload.models || []) {
+          const ids = ui[model.model_id];
+          if (!ids) continue;
+          const valueEl = document.getElementById(ids[0]);
+          const noteEl = document.getElementById(ids[1]);
+          if (!valueEl || !noteEl) continue;
+          const result = model.result || {};
+          if (model.model_id === "order_flow_imbalance" && result.ofi === null) valueEl.innerText = "UNAVAILABLE";
+          if (model.model_id === "nifty_monthly_futures_order_flow_imbalance" && result.combined_ofi !== undefined) valueEl.innerText = Number(result.combined_ofi).toFixed(4);
+          if (model.model_id === "correlation_breakdown") valueEl.innerText = model.integration_status === "DISABLED" ? "DISABLED" : (result.min_correlation ?? "UNAVAILABLE");
+          const reason = model.integration_reason || model.note || "";
+          noteEl.innerText = `${model.integration_status || "UNKNOWN"} · health ${model.health || "UNKNOWN"} · ${reason} · evaluation ${toISTDateTime(model.evaluation_id || model.computed_at)}`;
         }
       } catch {}
     }
@@ -1365,11 +1425,18 @@
 
     async function refreshCandleCounts() {
       try {
-        const res = await fetch(`${BASE}/candles/count/all`);
-        const payload = await res.json();
+        const [countRes, futuresRes] = await Promise.all([
+          fetch(`${BASE}/candles/count/all`),
+          fetch(`${BASE}/candles/NIFTY50?limit=1`),
+        ]);
+        const payload = await countRes.json();
+        const futures = await futuresRes.json();
         if (payload.status === "ok") {
+          const spotCount = payload.counts?.NIFTY50 ?? "—";
+          const futureCount = payload.futures?.count ?? futures.count ?? "—";
+          const latest = payload.futures?.latest || futures.latest_candle_timestamp;
           document.getElementById("allCandleCounts").innerText =
-            "Candles stored — " + Object.entries(payload.counts).map(([k, v]) => `${LABELS[k] || k}: ${v}`).join("   |   ");
+            `Candle storage — NIFTY futures: ${futureCount} rows · latest ${toISTDateTime(latest)} · legacy spot rows retained: ${spotCount}`;
         }
       } catch {}
     }

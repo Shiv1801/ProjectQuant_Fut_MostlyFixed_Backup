@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-10-15T14:41:55.860801+05:30",
+  "trained_at": "2026-10-16T09:38:49.385065+05:30",
   "feature_names": [
     "group_g_active",
     "group_g_confidence",
@@ -64,14 +64,14 @@
     "zscore_std__present",
     "zscore_zscore__present"
   ],
-  "trade_count": 358,
-  "labeled_count": 275,
-  "train_count": 192,
-  "val_count": 83,
-  "train_accuracy": 0.875,
-  "val_accuracy": 0.5783,
-  "val_brier_score": 0.2342,
-  "baseline_accuracy": 0.6265,
+  "trade_count": 361,
+  "labeled_count": 278,
+  "train_count": 194,
+  "val_count": 84,
+  "train_accuracy": 0.8763,
+  "val_accuracy": 0.619,
+  "val_brier_score": 0.2268,
+  "baseline_accuracy": 0.619,
   "beats_baseline": false,
   "min_trades_threshold": 150
 }

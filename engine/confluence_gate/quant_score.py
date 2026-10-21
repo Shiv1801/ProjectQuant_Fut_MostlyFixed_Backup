@@ -13,6 +13,70 @@ regime/vol models, which mainly gate whether to trust the direction
 signals at all).
 """
 
+import math
+
+
+MODEL_INTEGRATION = {
+    "hurst": ("C", "directional_context", "regime context selects the z-score interpretation"),
+    "zscore": ("C", "score_contributor", "directional vote"),
+    "variance_ratio": ("C", "confirmation", "confirms or withholds the Hurst-selected z-score regime"),
+    "ofi": ("C", "score_contributor", "directional vote when depth is valid"),
+    "futures_ofi": ("C", "score_contributor", "directional vote when at least one discovered futures book is valid and fresh"),
+    "pcr": ("D", "score_contributor", "contrarian directional vote"),
+    "max_pain": ("D", "score_contributor", "soft directional vote"),
+    "oi_change": ("D", "score_contributor", "directional positioning vote"),
+    "gex": ("D", "diagnostic_only", "no approved score mapping"),
+    "realized_vol": ("A", "context_only", "volatility context; not a directional vote"),
+    "garch": ("A", "context_only", "volatility context; not a directional vote"),
+    "vrp": ("B", "premium_suitability", "option-premium suitability gate; never directional"),
+    "iv_rank": ("B", "diagnostic_only", "no approved score mapping"),
+    "vix_regime": ("E", "context_only", "regime context; not a directional vote"),
+    "rv_iv_ratio": ("E", "context_only", "regime context; not a directional vote"),
+    "correlation": ("E", "disabled", "requires a second approved index series"),
+    "kelly": ("F", "sizing_input", "position sizing only"),
+    "vol_scaled": ("F", "sizing_input", "position sizing only"),
+    "group_g": ("G", "score_contributor", "validated ML vote when active"),
+}
+
+
+def _result_is_unavailable(result: dict | None) -> bool:
+    if not isinstance(result, dict):
+        return True
+    return result.get("status") in {"error", "unavailable", "not_applicable"}
+
+
+def _build_integration_audit(model_outputs: dict, votes: list[tuple[str, float, float]]) -> dict:
+    """Describe actual score use without assigning score to excluded models."""
+    vote_by_model = {
+        name: {"direction": direction, "weight": round(weight, 6)}
+        for name, direction, weight in votes
+        if weight > 0
+    }
+    audit = {}
+    for model, (group, role, reason) in MODEL_INTEGRATION.items():
+        result = model_outputs.get(model)
+        if model not in model_outputs:
+            state = "not_evaluated"
+            exclusion = "model output was not present in this evaluation snapshot"
+        elif _result_is_unavailable(result):
+            state = "unavailable"
+            exclusion = "model output was unavailable or not applicable"
+        elif model in vote_by_model:
+            state = "contributing"
+            exclusion = None
+        else:
+            state = role
+            exclusion = reason
+        audit[model] = {
+            "group": group,
+            "role": role,
+            "state": state,
+            "contributes_to_score": state == "contributing",
+            "score_vote": vote_by_model.get(model),
+            "exclusion_reason": exclusion,
+        }
+    return audit
+
 
 def _vote_from_hurst(hurst_result: dict) -> tuple[float, float]:
     """Returns (bullish_lean, weight). Hurst alone has no direction — it
@@ -26,9 +90,37 @@ def _vote_from_hurst(hurst_result: dict) -> tuple[float, float]:
     return 0.0, 0.0
 
 
-def _vote_from_zscore(zscore_result: dict, hurst_regime: str | None) -> tuple[float, float]:
+def _regime_confirmation(hurst_result: dict, vr_result: dict) -> dict:
+    """Combine two non-directional regime checks without double-counting them."""
+    hurst = hurst_result.get("hurst")
+    hurst_regime = hurst_result.get("regime")
+    if hurst is None or hurst_regime not in {"trending", "mean_reverting", "random_walk"}:
+        return {"status": "unavailable", "zscore_eligible": False,
+                "effect": "zscore_withheld", "reason": "Hurst is missing, invalid, or ambiguous"}
+    if hurst_regime == "random_walk":
+        return {"status": "neutral", "zscore_eligible": False,
+                "effect": "zscore_withheld", "reason": "Hurst is in the random-walk band"}
+
+    vr = vr_result.get("variance_ratio")
+    if vr is None or vr_result.get("persistent") is None:
+        return {"status": "partial", "zscore_eligible": True,
+                "effect": "hurst_only", "reason": "Variance Ratio unavailable; Hurst remains authoritative"}
+    vr_regime = "trending" if vr_result.get("persistent") else (
+        "mean_reverting" if vr_result.get("mean_reverting") else "random_walk"
+    )
+    if vr_regime == hurst_regime:
+        return {"status": "aligned", "zscore_eligible": True,
+                "effect": "confirmed", "reason": "Hurst and Variance Ratio agree"}
+    return {"status": "conflict", "zscore_eligible": False,
+            "effect": "zscore_withheld", "reason": "Hurst and Variance Ratio disagree"}
+
+
+def _vote_from_zscore(zscore_result: dict, hurst_regime: str | None,
+                      regime_confirmation: dict | None = None) -> tuple[float, float]:
     z = zscore_result.get("zscore")
     if z is None:
+        return 0.0, 0.0
+    if regime_confirmation is not None and not regime_confirmation.get("zscore_eligible", False):
         return 0.0, 0.0
     # In a mean-reverting regime, an extended z-score suggests reversal (opposite direction).
     # In a trending regime, an extended z-score suggests continuation (same direction).
@@ -44,14 +136,54 @@ def _vote_from_zscore(zscore_result: dict, hurst_regime: str | None) -> tuple[fl
 
 
 def _vote_from_variance_ratio(vr_result: dict) -> tuple[float, float]:
-    # VR itself isn't directional — it's a confirmation of whether
-    # momentum/reversal votes should be trusted (same role as Hurst).
+    # VR is intentionally not a directional vote. Its effect is returned in
+    # regime_confirmation so it cannot be counted twice with Hurst.
     return 0.0, 0.0
 
 
 def _vote_from_ofi(ofi_result: dict) -> tuple[float, float]:
+    if not isinstance(ofi_result, dict):
+        return 0.0, 0.0
+    if "status" in ofi_result and ofi_result.get("status") != "valid":
+        return 0.0, 0.0
+    if ofi_result.get("fresh") is False or (
+        isinstance(ofi_result.get("age_seconds"), (int, float))
+        and ofi_result["age_seconds"] > 15
+    ):
+        return 0.0, 0.0
     ofi = ofi_result.get("ofi")
-    if ofi is None:
+    if not isinstance(ofi, (int, float)) or not math.isfinite(ofi):
+        return 0.0, 0.0
+    direction = 1 if ofi > 0 else (-1 if ofi < 0 else 0)
+    weight = min(abs(ofi) * 2, 1.0) * 0.7
+    return direction, weight
+
+
+def _vote_from_futures_ofi(ofi_result: dict) -> tuple[float, float]:
+    """Use any valid, fresh futures-depth snapshots; one contract is enough.
+
+    calculate_futures_ofi marks one valid contract as ``partial`` and
+    exposes its quantity-weighted value as ``combined_ofi``. Requiring two
+    contracts here discarded usable data and prevented the fallback policy.
+    Invalid/stale rows are excluded by calculate_futures_ofi; independently
+    verify that at least one row is valid and the aggregate is finite.
+    """
+    if not isinstance(ofi_result, dict) or ofi_result.get("status") not in {"valid", "ok", "partial"}:
+        return 0.0, 0.0
+    rows = ofi_result.get("contracts") or []
+    valid_rows = [row for row in rows if isinstance(row, dict) and row.get("status") == "valid"]
+    valid_count = ofi_result.get("valid_contracts")
+    if not isinstance(valid_count, int) or valid_count < 1 or not valid_rows:
+        return 0.0, 0.0
+    if ofi_result.get("expected_contracts") not in (None, 2):
+        return 0.0, 0.0
+    if ofi_result.get("health_status") in {"STALE", "INVALID_CONTRACT", "INVALID_DATA", "NO_VALID_CONTRACTS", "MISSING_DEPTH"}:
+        # MISSING_DEPTH may describe the missing second contract in a partial
+        # result, so allow it only when the aggregate itself is explicitly partial.
+        if not (ofi_result.get("status") == "partial" and valid_count >= 1):
+            return 0.0, 0.0
+    ofi = ofi_result.get("combined_ofi")
+    if not isinstance(ofi, (int, float)) or isinstance(ofi, bool) or not math.isfinite(ofi):
         return 0.0, 0.0
     direction = 1 if ofi > 0 else (-1 if ofi < 0 else 0)
     weight = min(abs(ofi) * 2, 1.0) * 0.7
@@ -218,7 +350,7 @@ def _vote_from_group_g(group_g_result: dict | None) -> tuple[float, float]:
     return direction, weight
 
 
-def compute_quant_confidence(model_outputs: dict) -> dict:
+def compute_quant_confidence(model_outputs: dict, evaluation_id: str | None = None) -> dict:
     """
     model_outputs: dict of already-computed results from the various
     /signals/* endpoints, keyed by model name. Missing keys are treated
@@ -230,10 +362,26 @@ def compute_quant_confidence(model_outputs: dict) -> dict:
     """
     hurst = model_outputs.get("hurst", {})
     hurst_regime = hurst.get("regime")
+    variance_ratio = model_outputs.get("variance_ratio", {})
+    regime_confirmation = _regime_confirmation(hurst, variance_ratio)
 
     votes = []
-    votes.append(("zscore", *_vote_from_zscore(model_outputs.get("zscore", {}), hurst_regime)))
-    votes.append(("ofi", *_vote_from_ofi(model_outputs.get("ofi", {}))))
+    votes.append(("zscore", *_vote_from_zscore(
+        model_outputs.get("zscore", {}), hurst_regime, regime_confirmation)))
+
+    # Spot and futures are alternative/fallback sources for one OFI factor.
+    # When both are valid, split the existing 0.7 maximum influence between
+    # them so the same factor is not counted twice. Their weighted votes then
+    # naturally cancel when the sources disagree.
+    spot_ofi_vote = _vote_from_ofi(model_outputs.get("ofi", {}))
+    futures_ofi_vote = _vote_from_futures_ofi(model_outputs.get("futures_ofi", {}))
+    both_ofi_sources_valid = spot_ofi_vote[1] > 0 and futures_ofi_vote[1] > 0
+    if both_ofi_sources_valid:
+        votes.append(("ofi", spot_ofi_vote[0], spot_ofi_vote[1] / 2.0))
+        votes.append(("futures_ofi", futures_ofi_vote[0], futures_ofi_vote[1] / 2.0))
+    else:
+        votes.append(("ofi", *spot_ofi_vote))
+        votes.append(("futures_ofi", *futures_ofi_vote))
     votes.append(("pcr", *_vote_from_pcr(model_outputs.get("pcr", {}))))
     # Added 2026-09-25, per explicit request -- these two are the only
     # other genuinely directional models among the 12+ computed; the
@@ -249,11 +397,38 @@ def compute_quant_confidence(model_outputs: dict) -> dict:
     # older call site) behaves exactly as before -- backward compatible.
     votes.append(("group_g", *_vote_from_group_g(model_outputs.get("group_g"))))
 
+    integration_audit = _build_integration_audit(model_outputs, votes)
+
+    spot_ofi = model_outputs.get("ofi") if isinstance(model_outputs.get("ofi"), dict) else {}
+    futures_ofi = model_outputs.get("futures_ofi") if isinstance(model_outputs.get("futures_ofi"), dict) else {}
+    valid_ofi_sources = []
+    if _vote_from_ofi(spot_ofi)[1] > 0:
+        valid_ofi_sources.append("spot")
+    if _vote_from_futures_ofi(futures_ofi)[1] > 0:
+        valid_ofi_sources.append("futures")
+    ofi_values = []
+    if "spot" in valid_ofi_sources:
+        ofi_values.append(float(spot_ofi["ofi"]))
+    if "futures" in valid_ofi_sources:
+        ofi_values.append(float(futures_ofi["combined_ofi"]))
+    ofi_integration = {
+        "sources": valid_ofi_sources,
+        "status": "available" if valid_ofi_sources else "unavailable",
+        "combined_ofi": round(sum(ofi_values) / len(ofi_values), 3) if ofi_values else None,
+        "method": "equal_mean_of_valid_spot_and_futures_values; source votes retain existing 0.7 weights",
+    }
+
     total_weight = sum(w for _, d, w in votes)
     if total_weight == 0:
         return {
             "confidence": 0.0, "direction": None, "votes": [],
             "note": "no models produced a usable directional vote (insufficient data or all neutral)",
+            "evaluation_id": evaluation_id,
+            "direction_source": "quant_score",
+            "directional_alignment": {"required": True, "status": "neutral_blocks_trade"},
+            "regime_confirmation": regime_confirmation,
+            "model_integration": integration_audit,
+            "ofi_integration": ofi_integration,
         }
 
     weighted_direction = sum(d * w for _, d, w in votes) / total_weight
@@ -293,7 +468,16 @@ def compute_quant_confidence(model_outputs: dict) -> dict:
     return {
         "confidence": round(confidence, 3),
         "direction": direction,
+        "evaluation_id": evaluation_id,
+        "direction_source": "quant_score",
+        "directional_alignment": {
+            "required": True,
+            "status": "aligned" if direction in ("long_call", "long_put") else "neutral_blocks_trade",
+        },
         "regime_context": hurst_regime,
+        "regime_confirmation": regime_confirmation,
         "votes": vote_detail,
+        "model_integration": integration_audit,
+        "ofi_integration": ofi_integration,
         "note": None,
     }

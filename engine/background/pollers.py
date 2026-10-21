@@ -24,10 +24,11 @@ FinNifty removed from all pollers (NIFTY50-only app now).
 """
 import asyncio
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from loguru import logger
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = ZoneInfo("Asia/Kolkata")
 
 # Real NSE 2026 trading holidays (weekday holidays only -- weekends are
 # already handled separately by the weekday() check below). Same source
@@ -63,10 +64,18 @@ def is_within_market_hours(now: datetime | None = None) -> bool:
 
 from engine.shared_state.store import shared_state
 from engine.data_layer.fyers_client.rest_client import (
-    get_quotes_multi, get_option_chain, get_market_depth, get_funds, extract_available_balance,
+    get_quotes_multi, get_option_chain, get_market_depth, get_historical_candles,
+    get_funds, extract_available_balance,
 )
 from engine.data_layer.fyers_client.symbol_master import fetch_nifty_monthly_futures
-from config.db import insert_tick
+from engine.data_layer.futures_pipeline import (
+    parse_futures_quotes, normalize_futures_candles, normalize_futures_depth,
+    build_live_futures_candle,
+)
+from config.db import (
+    insert_tick, insert_futures_quote, insert_futures_candles,
+    insert_futures_depth_snapshot, get_recent_futures_candles,
+)
 
 TOKEN_PATH = Path(".fyers_token")
 
@@ -274,7 +283,8 @@ async def option_chain_poller():
             await asyncio.sleep(2)
             continue
         if not is_within_market_hours():
-            shared_state.mark_poller_success("option_chain")
+            # Market closed is an expected idle state, not a successful data refresh.
+            # Keep the last actual fetch time so stale option-chain data remains visible as stale.
             await asyncio.sleep(60)
             continue
         # Read fresh each cycle so a Settings change takes effect on
@@ -298,23 +308,22 @@ async def option_chain_poller():
 
 
 async def futures_depth_poller():
-    """Poll the nearest two NIFTY monthly futures for diagnostics only.
-
-    Separate from the spot-index depth poller and trading decision path.
-    """
+    """Maintain current and next NIFTY monthly futures diagnostics."""
     status = shared_state.poller_status["futures_depth"]
     status["running"] = True
 
-    contracts = []
+    contracts: list[dict] = []
     loop = asyncio.get_running_loop()
     next_master_refresh = 0.0
+    next_history_fetch = 0.0
     cycle_seconds = 4.0
     refresh_seconds = 6 * 60 * 60
     retry_refresh_seconds = 5 * 60
+    history_seconds = 60.0
 
     logger.info(
-        "Futures depth poller started: two nearest NIFTY monthly futures, "
-        "4-second cycle, 6-hour symbol-master refresh (diagnostic only)"
+        "Futures data poller started: current/next NIFTY monthly futures, "
+        "quotes/depth every 4 seconds, one-minute history every 60 seconds"
     )
 
     while True:
@@ -323,83 +332,158 @@ async def futures_depth_poller():
             await asyncio.sleep(5)
             continue
 
-        if not is_within_market_hours():
-            await asyncio.sleep(30)
-            continue
-
         now_mono = loop.time()
         if not contracts or now_mono >= next_master_refresh:
             try:
                 discovered = await asyncio.to_thread(fetch_nifty_monthly_futures)
-                if len(discovered) != 2:
+                roles = {contract.get("role") for contract in discovered}
+                if len(discovered) != 2 or roles != {"current_month", "next_month"}:
                     raise RuntimeError(
-                        f"Expected two futures contracts, received {len(discovered)}"
+                        "Symbol master did not provide exactly current_month and next_month contracts"
                     )
 
                 contracts = discovered
                 shared_state.set_futures_contracts(contracts)
                 next_master_refresh = loop.time() + refresh_seconds
+                next_history_fetch = 0.0
                 logger.info(
                     "Futures contracts refreshed: "
-                    + ", ".join(c["symbol"] for c in contracts)
+                    + ", ".join(f"{c['role']}={c['symbol']}" for c in contracts)
                 )
             except Exception as exc:
                 message = f"Symbol-master refresh failed: {exc}"
+                contracts = []
+                shared_state.mark_futures_discovery_unavailable(message)
                 shared_state.mark_poller_error("futures_depth", message)
                 logger.warning(message)
                 next_master_refresh = loop.time() + retry_refresh_seconds
+                await asyncio.sleep(30)
+                continue
 
-                # Never discard a previously valid contract list just
-                # because a later symbol-master refresh failed.
-                if not contracts:
-                    await asyncio.sleep(30)
-                    continue
+        if not is_within_market_hours():
+            for contract in contracts:
+                shared_state.set_futures_field_status(contract["role"], "market", "market_closed")
+            await asyncio.sleep(30)
+            continue
 
-        any_success = False
-        any_error = False
+        for contract in contracts:
+            shared_state.set_futures_field_status(contract["role"], "market", "market_open")
+
+        symbols = [contract["symbol"] for contract in contracts]
+        cycle_success = False
+        cycle_error = False
+        try:
+            raw_quotes = await asyncio.to_thread(get_quotes_multi, token, symbols)
+            fetched_at = datetime.now(IST).isoformat()
+            quotes = parse_futures_quotes(raw_quotes, contracts, fetched_at)
+            for contract in contracts:
+                quote = quotes[contract["role"]]
+                shared_state.set_futures_quote(contract["role"], quote)
+                if quote.get("status") == "valid":
+                    insert_futures_quote(quote)
+                    existing = get_recent_futures_candles(contract["symbol"], limit=1)
+                    live_candle = build_live_futures_candle(
+                        quote, contract, existing[-1] if existing else None
+                    )
+                    if live_candle:
+                        insert_futures_candles([live_candle])
+                        recent = shared_state.get_futures_candles(contract["role"])
+                        if recent and recent[-1].get("minute_bucket") == live_candle["minute_bucket"]:
+                            recent[-1] = live_candle
+                        else:
+                            recent.append(live_candle)
+                        shared_state.set_futures_candles(contract["role"], recent[-200:])
+                    cycle_success = True
+                else:
+                    shared_state.set_futures_data_error(
+                        contract["role"], "quote", quote.get("error") or quote["status"]
+                    )
+                    cycle_error = True
+        except Exception as exc:
+            cycle_error = True
+            for contract in contracts:
+                shared_state.set_futures_data_error(contract["role"], "quote", str(exc))
+            logger.warning(f"futures quote poll failed: {exc}")
 
         for contract in contracts:
             symbol = contract["symbol"]
             try:
-                raw = await asyncio.to_thread(get_market_depth, token, symbol)
-
-                if not isinstance(raw, dict) or raw.get("s") != "ok":
-                    message = f"{symbol}: FYERS depth response not ok: {raw}"
-                    shared_state.set_futures_depth_error(symbol, message)
-                    shared_state.mark_poller_error("futures_depth", message)
-                    any_error = True
-                    continue
-
-                depth_map = raw.get("d") or {}
-                book = depth_map.get(symbol)
-
-                if not isinstance(book, dict):
-                    message = f"{symbol}: response did not contain its order book"
-                    shared_state.set_futures_depth_error(symbol, message)
-                    shared_state.mark_poller_error("futures_depth", message)
-                    any_error = True
-                    continue
-
-                shared_state.set_futures_depth(symbol, raw, contract)
-                any_success = True
-
+                raw_depth = await asyncio.to_thread(get_market_depth, token, symbol)
+                snapshot = normalize_futures_depth(
+                    raw_depth, contract, datetime.now(IST).isoformat()
+                )
+                if snapshot["status"] in {"valid", "incomplete"}:
+                    shared_state.set_futures_depth(
+                        symbol, raw_depth, contract, snapshot["status"], snapshot.get("observed_at")
+                    )
+                    insert_futures_depth_snapshot(snapshot)
+                if snapshot["status"] == "valid":
+                    cycle_success = True
+                else:
+                    cycle_error = True
+                    shared_state.set_futures_depth_error(symbol, snapshot["error"] or snapshot["status"])
+                    shared_state.set_futures_data_error(
+                        contract["role"], "depth", snapshot["error"] or snapshot["status"]
+                    )
             except Exception as exc:
-                message = f"{symbol}: {exc}"
-                shared_state.set_futures_depth_error(symbol, message)
-                shared_state.mark_poller_error("futures_depth", message)
-                logger.warning(f"futures_depth_poller error: {message}")
-                any_error = True
+                cycle_error = True
+                shared_state.set_futures_depth_error(symbol, str(exc))
+                shared_state.set_futures_data_error(contract["role"], "depth", str(exc))
+                logger.warning(f"futures depth poll failed ({symbol}): {exc}")
 
-        if any_success and not any_error:
+        if loop.time() >= next_history_fetch:
+            today = datetime.now(IST).strftime("%Y-%m-%d")
+            for contract in contracts:
+                try:
+                    raw_history = await asyncio.to_thread(
+                        get_historical_candles,
+                        token,
+                        contract["symbol"],
+                        "1",
+                        today,
+                        today,
+                        0,
+                    )
+                    if not isinstance(raw_history, dict) or raw_history.get("s") != "ok":
+                        cycle_error = True
+                        shared_state.set_futures_data_error(
+                            contract["role"], "candles", f"history response not ok: {raw_history}"
+                        )
+                        continue
+                    candles = normalize_futures_candles(raw_history, contract)
+                    if candles:
+                        insert_futures_candles(candles)
+                        shared_state.set_futures_candles(contract["role"], candles)
+                        cycle_success = True
+                    else:
+                        cycle_error = True
+                        shared_state.set_futures_data_error(
+                            contract["role"], "candles", "no valid one-minute candles returned"
+                        )
+                except Exception as exc:
+                    cycle_error = True
+                    shared_state.set_futures_data_error(contract["role"], "candles", str(exc))
+                    logger.warning(f"futures history poll failed ({contract['symbol']}): {exc}")
+            next_history_fetch = loop.time() + history_seconds
+
+        if cycle_success and not cycle_error:
             shared_state.mark_poller_success("futures_depth")
-        elif any_success and any_error:
-            # A partial cycle is still useful, but should remain visible
-            # as degraded health rather than being reported fully healthy.
-            status["running"] = True
-        # When all requests fail, the individual errors and poller error
-        # count remain available for the diagnostic endpoint.
+        elif cycle_error:
+            shared_state.mark_poller_error("futures_depth", "one or more futures data fields are unavailable")
 
         await asyncio.sleep(cycle_seconds)
+
+
+_futures_depth_task: asyncio.Task | None = None
+
+
+def start_futures_depth_poller():
+    """Start the futures task once per event loop."""
+    global _futures_depth_task
+    if _futures_depth_task is not None and not _futures_depth_task.done():
+        return _futures_depth_task
+    _futures_depth_task = asyncio.create_task(futures_depth_poller())
+    return _futures_depth_task
 
 
 async def depth_poller():
@@ -622,7 +706,7 @@ async def option_chain_history_loop():
                 continue
 
             expiry_dts = [d for d in (_parse_expiry_epoch(e.get("expiry")) for e in parsed.get("expiry_data", [])) if d is not None]
-            days_to_expiry = round((min(expiry_dts) - datetime.utcnow()).total_seconds() / 86400, 2) if expiry_dts else None
+            days_to_expiry = round((min(expiry_dts) - datetime.now(timezone.utc)).total_seconds() / 86400, 2) if expiry_dts else None
 
             minute_bucket = snapshot_time.strftime("%Y-%m-%d %H:%M:00")
             rows = []
@@ -673,7 +757,7 @@ def start_background_pollers():
     asyncio.create_task(price_poller())
     asyncio.create_task(option_chain_poller())
     asyncio.create_task(depth_poller())
-    asyncio.create_task(futures_depth_poller())
+    start_futures_depth_poller()
     asyncio.create_task(account_balance_poller())
     start_candle_volume_enrichment()
     logger.info("Background pollers started: prices (NIFTY50+VIX, ~3s), option_chain (NIFTY50 only, ~2s), depth (NIFTY50 only, ~2s), account_balance (~30s), candle_volume_enrichment (minute-boundary)")
@@ -989,6 +1073,7 @@ async def auto_entry_loop():
                         entry_result = execute_paper_entry(
                             index_id, direction, selected_strike, lots, lot_size,
                             quant_confidence=sizing.get("quant_confidence"),
+                            authorization=sizing.get("authorization"),
                         )
                         logger.info(f"AUTO-ENTRY (paper): {index_id} {direction} {selected_strike['strike']} x{lots} lots — {entry_result}")
                         index_status[index_id] = {"status": "entered_paper", "detail": entry_result, "mode": mode}
@@ -1025,6 +1110,7 @@ async def auto_entry_loop():
                                 direction=direction, strike=selected_strike["strike"], option_type=option_type,
                                 lots=lots, lot_size=lot_size, simulated_or_live_price=current_premium,
                                 quant_confidence=sizing.get("quant_confidence"),
+                                authorization=sizing.get("authorization"),
                             )
                             logger.warning(f"AUTO-ENTRY (live attempt): {index_id} — {live_result}")
                             index_status[index_id]["live_attempt"] = live_result
