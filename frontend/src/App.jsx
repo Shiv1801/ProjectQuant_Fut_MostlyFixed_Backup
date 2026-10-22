@@ -5,6 +5,7 @@ import OptionChain from './tabs/OptionChain.jsx'
 import PositionsRisk from './tabs/PositionsRisk.jsx'
 import TradeLog from './tabs/TradeLog.jsx'
 import BacktestModels from './tabs/BacktestModels.jsx'
+import GFM from './tabs/GFM.jsx'
 import TopBar from './components/TopBar.jsx'
 import { useLiveState } from './hooks/useLiveState.js'
 
@@ -15,6 +16,7 @@ const TABS = {
   positions: PositionsRisk,
   tradelog: TradeLog,
   backtest: BacktestModels,
+  gfm: GFM,
 }
 
 export default function App() {
